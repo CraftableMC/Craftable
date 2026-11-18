@@ -1,0 +1,17 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "org.craftablemc.craftable.client.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "OptionsListEntryAccessor",
+    "RecipeBookComponentAccessor",
+    "RecipeBookPageAccessor",
+    "RecipeButtonMixin",
+    "RecipeBookComponentMixin",
+    "RecipeCollectionMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

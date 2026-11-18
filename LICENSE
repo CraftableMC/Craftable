@@ -1,0 +1,254 @@
+CraftableMC Community License 1.0
+
+License identifier: LicenseRef-CraftableMC-Community-1.0
+Copyright (c) 2026 CraftableMC
+
+IMPORTANT TERMS: Sections 2-5 limit commercial uses and require redistribution
+and modification notices. Section 8 provides for termination and conditional
+reinstatement. Section 9 limits warranties and liability only as permitted
+by law. Read these terms before relying on their permissions. A corresponding
+Chinese translation is provided in LICENSE.zh-CN.
+
+1. Scope and acceptance
+
+"Software" means the Craftable source code, compiled code, assets, and
+documentation that the applicable copyright holders (the "Licensor") make
+available under this license, including their copyright-protected portions in
+modified versions and derivative works. "You" means the person or organization
+exercising rights under this license.
+
+Merely bundling an unchanged copy with other mods or using external
+configuration does not by itself make that copy a modified version.
+
+By exercising permissions that depend on this license, you accept its
+conditions. This does not condition rights you independently hold under law
+or another license. The Licensor grants only rights it is entitled to grant.
+Separately licensed third-party materials and dependencies remain under
+their own licenses; this license does not replace their terms.
+
+2. Copyright permission and noncommercial baseline
+
+Subject to this license, the Licensor grants you a worldwide, nonexclusive,
+royalty-free copyright license to use, study, reproduce, compile, modify,
+adapt, translate, distribute, publicly display and perform, communicate, and
+make the Software available to the public over information networks, in source
+or compiled form, as needed for permitted purposes. This copyright permission
+lasts for the duration of the applicable copyright unless terminated under
+Section 8 or as required by applicable law. The Licensor may not otherwise
+withdraw it from a compliant recipient.
+
+Noncommercial purposes are permitted. A purpose primarily directed toward
+commercial advantage or monetary compensation is not permitted unless it is
+expressly allowed by Section 3 or separately authorized in writing by the
+applicable rights holders. Noncommercial modified versions may be created
+and redistributed subject to the same conditions on the covered Software.
+This license does not require you to publish source code or private changes.
+
+3. Minecraft community permissions
+
+The following are also permitted purposes, including the revenue-generating
+activities expressly described below. These specific permissions override
+the noncommercial baseline only for these activities; Sections 4 and 5 still
+apply.
+
+a. Free modpacks. You may include and redistribute the Software, unmodified
+   or permissibly modified, in Minecraft modpacks made available without
+   payment for the pack or the Software. Ordinary hosting-platform
+   advertising or creator-reward revenue, and genuinely optional donations,
+   do not by themselves disqualify a free modpack. Payment, a purchase,
+   subscription, or donation must not be required to obtain its copies of
+   the Software. This permission does not allow selling modpacks containing
+   the Software.
+
+b. Videos and livestreams. You may create, publish, and monetize gameplay
+   videos, reviews, tutorials, and livestreams featuring the Software,
+   including through advertising, sponsorships, tips, donations, and voluntary
+   support subscriptions that do not restrict viewing. Videos and streams
+   containing Minecraft content must remain free to view in their entirety
+   and comply with the applicable Mojang/Microsoft terms. This license does
+   not authorize a viewing paywall or sale of video or stream copies. It
+   grants only the Licensor's rights concerning the media, not paid
+   distribution of the Software or extraction of its code into another
+   product. Other third-party conditions remain applicable under Section 6.
+
+c. Minecraft servers. You may use, copy, modify, and deploy the Software to
+   operate and maintain Minecraft servers, including servers that accept
+   donations or charge for access, subscriptions, or server services.
+   You may freely redistribute copies needed by players. Charging for
+   server gameplay or services is allowed; charging for the Software,
+   its download, a Software license key, or delivery of a modified version
+   is not. Obtaining a copy you distribute must not require a payment,
+   purchase, subscription, or donation. Fees solely for access to server
+   gameplay or services remain permitted. This permission does not authorize
+   selling custom builds, paid ports, or other paid deliveries of modified
+   copies, or incorporating the code into unrelated commercial products.
+
+   Employees acting on behalf of a server operator may perform the permitted
+   internal operation, maintenance, and modification activities for that
+   operator. Payment of wages for those internal activities does not by
+   itself constitute a sale or paid delivery of the Software. This does not
+   authorize external sales or paid delivery of forks or custom builds.
+
+d. Independent server services. Independent providers may charge for
+   infrastructure, hosting, installation, administration, configuration, or
+   technical support for Minecraft servers otherwise permitted under Section
+   3(c). Such charges must be for those services, not for a Software license
+   or access to, download of, or delivery of a Software copy. Obtaining a copy
+   must not require purchasing those services. This permission does not
+   authorize paid custom development or paid delivery of forks, ports,
+   patches, or custom builds. Describing a Software charge as a hosting,
+   support, or customization fee does not change that restriction.
+
+4. Uses not authorized by this license
+
+Except under separate written authorization from the applicable rights
+holders, you must not:
+
+a. Sell, rent, commercially license, or otherwise charge for copies of the
+   unmodified Software, whether standalone, repackaged, or in a paid bundle.
+
+b. Charge for access to, download of, or delivery of modified versions,
+   forks, ports, or custom builds. A required donation, subscription, or
+   purchase in exchange for such a copy is a charge, whatever it is called.
+   Calling a Software charge a service or customization fee does not make
+   it an authorized server-service charge.
+
+c. Copy, adapt, port, or incorporate copyright-protected code or other
+   protected portions of the Software into commercial software products
+   or services, except for the specific Minecraft activities in Section 3.
+
+These restrictions concern rights in the covered Software, not mere ideas,
+algorithms, facts, or independently written implementations that do not use
+its protected expression. Running an actual Minecraft server under Section
+3(c) is not prohibited merely because that server earns revenue.
+
+5. Redistribution, modification notices, and identity
+
+Whenever you redistribute the Software or any copyright-protected portion
+of it under this license, in source or compiled form, you must:
+
+a. Retain existing copyright, authorship, and license notices applicable to
+   that material and provide a complete copy of this license with it.
+   Preserve any applicable third-party notices as well.
+
+b. If you redistribute a modified version, prominently state that it is
+   unofficial and not an official CraftableMC release, and provide a brief,
+   accurate description of the changes. Include these statements with the
+   distributed copy in a readily accessible notice or equivalent location,
+   and in its project or download description where one exists. You may add
+   accurate credit for your own work without replacing existing attribution.
+
+c. Not misrepresent the Software's origin or claim that your modifications,
+   project, server, or services are produced, endorsed, or supported by
+   CraftableMC without its permission.
+
+No general trademark or branding license is granted. Truthful attribution,
+identification of compatibility, and redistribution of the unmodified
+Software with its existing notices and branding are allowed, but must not
+imply endorsement. Technical identifiers needed for compatibility may remain
+unchanged in modified versions; that does not waive the unofficial-version
+and change-notice requirements. No in-game watermark is required.
+
+Recipients obtain permissions for the Licensor's material directly under
+this license. You must not remove these conditions from that material or
+purport to grant broader rights in it than you hold. Your independently
+owned contributions and separate works are not automatically relicensed
+by this provision.
+
+6. Other rights and third-party terms
+
+This license does not limit fair use, fair dealing, or other rights that
+applicable law gives you independently. It does not revoke permissions you
+independently hold under another license.
+
+Minecraft and other third-party products remain subject to their own
+applicable rights and terms. These permissions do not grant rights owned
+by Mojang, Microsoft, or other third parties, or excuse compliance with
+their applicable terms. No affiliation with them is implied.
+
+7. Patent permission
+
+For permitted purposes, the Licensor grants you a worldwide, nonexclusive,
+royalty-free license to patent claims it can license that are necessarily
+infringed by those uses of the Software.
+
+If an individual brings a patent claim on their own behalf alleging that
+the Software infringes a patent, the patent permission granted to that
+individual under this license ends. Merely working for or representing an
+organization does not make that individual's own claim a claim by the
+organization or terminate the organization's patent permission.
+
+If an organization brings such a claim, itself or through a person acting
+on its behalf, the patent permission granted to that organization under this
+license ends for its use of the Software. This includes use on its behalf
+by employees, contractors, or other representatives acting in that capacity.
+It does not by itself terminate those persons' patent permissions for their
+own independent personal use, unless they also bring such a claim on their
+own behalf.
+
+This section terminates only the patent permissions specified above, not
+copyright permissions. No other patent permission is implied.
+
+8. Violations
+
+Permissions under this license terminate automatically upon noncompliance.
+The following cure rules provide an opportunity for reinstatement, not
+permission to continue prohibited activity.
+
+Before you first receive a written notice of noncompliance under this license
+from the Licensor or its authorized representative, your permissions are
+automatically reinstated when you fully comply and take practical steps to
+remedy past violations. Such pre-notice reinstatement does not consume the
+first-notice cure opportunity below.
+
+On your first receipt of such a notice, you have 32 days to fully comply and
+take practical steps to remedy the violations. Your permissions are
+automatically reinstated upon completing that cure within the period. All
+noncompliance identified in the first notice, together with reasonably
+related defects arising from the same incident and clarified during that
+period, is handled under this single cure opportunity. Additional notices,
+descriptions, or clarifications during that period do not restart or extend
+the 32-day period.
+
+After this first-notice cure, a later, independent violation does not qualify
+for automatic reinstatement. If the cure period expires without full
+compliance, automatic reinstatement is unavailable. These rules do not
+prevent a Licensor from separately authorizing reinstatement in writing.
+
+The notice must identify the Software and alleged noncompliance in reasonable
+detail. Receipt must be supported by evidence and determined in accordance
+with applicable law; sending or publicly posting a notice alone does not
+establish receipt. An acknowledgment by the recipient is not the only way
+to establish receipt.
+
+Reinstatement is prospective. It does not authorize prohibited conduct during
+noncompliance, waive liability or obligations for earlier violations, or
+restore patent permission terminated under Section 7. Termination does not
+affect rights you hold independently of this license.
+
+9. No warranty or liability
+
+THIS ENTIRE SECTION IS SUBJECT TO THE MANDATORY LIMITS OF APPLICABLE LAW.
+TO THE EXTENT PERMITTED BY APPLICABLE LAW, THE SOFTWARE IS PROVIDED "AS IS",
+WITHOUT WARRANTY OR CONDITION OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, OR NONINFRINGEMENT.
+THE LICENSOR IS NOT LIABLE FOR CLAIMS OR DAMAGES ARISING FROM THE SOFTWARE,
+THIS LICENSE, OR ITS USE, WHETHER IN CONTRACT, TORT, OR OTHERWISE.
+
+NOTHING IN THIS LICENSE EXCLUDES OR LIMITS LIABILITY THAT APPLICABLE LAW
+DOES NOT ALLOW TO BE EXCLUDED OR LIMITED. THIS INCLUDES, WHERE APPLICABLE LAW
+SO REQUIRES, LIABILITY FOR PERSONAL INJURY OR FOR PROPERTY LOSS CAUSED BY
+INTENTIONAL MISCONDUCT OR GROSS NEGLIGENCE, AND ANY OTHER NON-EXCLUDABLE
+LIABILITY. THESE EXCEPTIONS APPLY TO BOTH THE WARRANTY DISCLAIMER AND THE
+LIMITATION OF LIABILITY ABOVE.
+
+10. Separate permissions and license versions
+
+Uses outside these permissions require separate written authorization from
+the applicable rights holders. No royalty, donation, or purchase by itself
+grants that authorization. A later license version does not automatically
+replace this one for copies offered under this version. This is a custom
+license. LICENSE.zh-CN provides a corresponding Chinese translation for
+understanding the same terms. To the extent permitted by applicable law,
+this English text controls any irreconcilable translation difference.
+Informal summaries do not expand the permissions or replace these terms.
