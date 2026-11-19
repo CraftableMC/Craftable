@@ -28,6 +28,7 @@ import net.neoforged.neoforge.client.event.RenderFrameEvent;
 import net.neoforged.neoforge.client.event.ToastAddEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.craftablemc.craftable.Craftable;
+import org.craftablemc.craftable.client.recipebook.ClientBrowsePlanner;
 import org.craftablemc.craftable.api.CraftingStatus;
 import org.craftablemc.craftable.client.menu.AmbientInventoryScreen;
 import org.craftablemc.craftable.client.mixin.RecipeBookComponentAccessor;
@@ -81,6 +82,7 @@ public final class InventoryClientSmoke {
     private static volatile String firstCreateOutcome;
     private static long quietSequence;
     private static long previewStart;
+    private static int prewarmedCatalogBuilds;
     private static final RepeatCraftScenario repeatCraft = new RepeatCraftScenario();
     private static final MenuMoveScenario menuMoves = new MenuMoveScenario();
     private static final LateConfirmationScenario lateConfirmation = new LateConfirmationScenario();
@@ -135,6 +137,11 @@ public final class InventoryClientSmoke {
                 });
                 advance(Step.OPEN_INVENTORY);
             } else if (step == Step.OPEN_INVENTORY && configured && age > 60) {
+                // 中文：检查真实进世界后的目录。首次打开背包前只有静态知识，尚无动态浏览授权。
+                // Check the live join path: only static knowledge exists before the first inventory screen.
+                require(mc.screen == null && ClientBrowsePlanner.catalogReady() && !ClientBrowsePlanner.ready(),
+                        "Static recipe catalog was not ready in the world before opening inventory, or already granted browse access");
+                prewarmedCatalogBuilds = ClientBrowsePlanner.catalogBuilds();
                 mc.player.getRecipeBook().setOpen(RecipeBookType.CRAFTING, true);
                 mc.player.getRecipeBook().setFiltering(RecipeBookType.CRAFTING, false);
                 // 中文：使用真实原版配方书开关；仅改客户端标志会被首个解锁包的服务端设置覆盖，折叠页面并合法停止需求。
@@ -159,6 +166,8 @@ public final class InventoryClientSmoke {
                 require(RecipeButtonTargetResolver.status(button) == CraftingStatus.CRAFTABLE, "Chest-only stick not craftable");
                 require(button.getCollection().hasCraftable(), "Vanilla collection not craftable");
                 require(RecipeButtonTargetResolver.preferredRecipe(button).id().equals(STICK), "Wrong recipe variant selected");
+                require(ClientBrowsePlanner.catalogBuilds() == prewarmedCatalogBuilds,
+                        "The first browse lease rebuilt the prewarmed recipe catalog");
                 Screenshot.grab(mc.gameDirectory, "inventory-smoke-craftable.png", mc.getMainRenderTarget(), ignored -> {});
                 PacketDistributor.sendToServer(new CreateRecipeRequestPayload(STICK, ClientRequestSequence.next(), -1, true, org.craftablemc.craftable.planner.CraftRequest.PartialPolicy.EXPLICIT_SAFE));
                 advance(Step.VERIFY_FIRST_CREATE);

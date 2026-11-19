@@ -1,9 +1,11 @@
 package org.craftablemc.craftable.client.recipebook;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import net.minecraft.client.Minecraft;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.item.crafting.RecipeHolder;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -94,9 +96,16 @@ public final class ClientBrowsePlanner {
         if (connection != mc.getConnection()) { disconnect(); connection = mc.getConnection(); }
         var collection = mc.level.getRecipeManager().getRecipes();
         if (recipeCollection != collection) { recipeCollection = collection; recipesChanged(); }
-        boolean open = RecipeBookProjection.modeAllowed() && CraftableClientConfig.recipeBookEnhancementsEnabled()
-                && (RecipeBookProjection.component(mc.screen) != null || org.craftablemc.craftable.client.CraftingPlanOverlay.active());
-        if (!open) { closeView(); return; }
+        boolean enabled = RecipeBookProjection.modeAllowed() && CraftableClientConfig.recipeBookEnhancementsEnabled();
+        boolean open = enabled && (RecipeBookProjection.component(mc.screen) != null
+                || org.craftablemc.craftable.client.CraftingPlanOverlay.active());
+        if (!open) {
+            closeView();
+            // 中文：只预热已同步的静态目录。资源请求、搜索和授权仍由实际页面驱动。
+            // Warm only the synced static catalog. Resource requests, search and authority still require an active view.
+            if (enabled && !collection.isEmpty()) advanceCatalog(mc, collection, sliceStart);
+            return;
+        }
         if (menu != mc.player.containerMenu) {
             closeView(); menu = mc.player.containerMenu; menuId = mc.player.containerMenu.containerId;
             revision = ClientRequestSequence.next();
@@ -142,15 +151,12 @@ public final class ClientBrowsePlanner {
         }
         boolean fresh = grant != null && snapshot != null && grant.session().equals(snapshot.session())
                 && grant.resources() == snapshot.resources() && matchesRules(snapshot, grant) && now <= grant.expires();
-        if (grant == null) { ClientRecipeStatusStore.authorizeLocal(false); return; }
-        CATALOG.observe(connection, generation, collection, mc.level.registryAccess());
-        if (CATALOG.state() == PlanningInput.Catalog.State.BUILDING) {
+        if ((grant != null || !collection.isEmpty()) && advanceCatalog(mc, collection, sliceStart)) {
             ClientRecipeStatusStore.authorizeLocal(false);
-            long remaining = 2_000_000L - (System.nanoTime() - sliceStart);
-            if (remaining > 0) CATALOG.advance(remaining);
-            return; // 中文：目录和搜索不能在同 tick 各获 2ms。 English: Catalog and search never each receive a 2 ms slice in one tick.
+            return;
         }
-        if (CATALOG.state() != PlanningInput.Catalog.State.READY || snapshot == null || grant == null) return;
+        if (grant == null) { ClientRecipeStatusStore.authorizeLocal(false); return; }
+        if (!catalogReady() || snapshot == null) return;
         var currentPersonalMode = CraftableClientConfig.partialMode();
         var effectivePolicy = snapshot.directPreparation().executionPolicy().restrict(CraftableClientConfig.partialPolicy());
         var effectivePreparation = snapshot.directPreparation().restrict(effectivePolicy);
@@ -185,6 +191,16 @@ public final class ClientBrowsePlanner {
         // caps cached projections/queue scans on unusually fast machines.
         for (int dispatched = 0; dispatched < 64 && System.nanoTime() - sliceStart < 2_000_000L; dispatched++)
             if (!dispatch(sliceStart)) break;
+    }
+
+    /** 构建中只用本 tick 剩余预算，调用者将搜索留到下一 tick。
+     * In-progress builds use only the remaining tick budget and the caller defers search until the next tick. */
+    private static boolean advanceCatalog(Minecraft mc, Collection<RecipeHolder<?>> recipes, long sliceStart) {
+        CATALOG.observe(connection, generation, recipes, mc.level.registryAccess());
+        if (CATALOG.state() != PlanningInput.Catalog.State.BUILDING) return false;
+        long remaining = 2_000_000L - (System.nanoTime() - sliceStart);
+        if (remaining > 0) CATALOG.advance(remaining);
+        return true;
     }
 
     /** 中文：按有界 3:1 公平性续算现有任务，缓存投影也占前台回合；不为每个任务重开整段 tick 预算。
@@ -585,11 +601,14 @@ public final class ClientBrowsePlanner {
         if (!accepts(value.menuId(), value.revision())) return;
         if (value.recipes() < recipeVersion) return;
         if (snapshot != null && snapshot.session().equals(value.session()) && value.resources() < snapshot.resources()) return;
-        if (recipeVersion != value.recipes()) {
-            recipeVersion = value.recipes(); generation = new Object(); CATALOG.clear(); input = null;
+        // 中文：首个租约只绑定服务端版本，复用按本地同步世代预热的目录。使用前仍核对指纹。
+        // The first lease binds the server version to the prewarmed local catalog. Consumption still checks the fingerprint.
+        if (recipeVersion >= 0 && recipeVersion != value.recipes()) {
+            generation = new Object(); CATALOG.clear(); input = null;
             ClientRecipeStatusStore.beginLocal(); // 中文：配方重载不同于库存刷新。 English: A recipe reload is not an inventory refresh.
             resetCalculations();
         }
+        recipeVersion = value.recipes();
         grant = value;
         org.craftablemc.craftable.client.menu.AmbientInventoryEvents.receiveRules(value.settings(), value.workbench());
         if (snapshot != null && (!snapshot.session().equals(value.session()) || snapshot.resources() != value.resources())) {
@@ -733,6 +752,7 @@ public final class ClientBrowsePlanner {
     public static long lastTickNanos() { return lastTickNanos; }
     public static long foregroundSlices() { return foregroundSlices; }
     public static long hiddenSlices() { return hiddenSlices; }
+    public static boolean catalogReady() { return CATALOG.state() == PlanningInput.Catalog.State.READY; }
     public static int catalogBuilds() { return CATALOG.builds(); }
     static final class Turns {
         private int consecutive;

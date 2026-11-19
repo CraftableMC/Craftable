@@ -33,7 +33,7 @@ CI 沿用 Gradle 标准 `build` 生命周期，当前[工作流](../.github/work
 | --- | --- | --- | --- |
 | unit | `cleanTest test` | 配置与模式、手势、预算、网络帧、快照接收、知识文件、翻译键/参数及纯 UI 几何 | 不验证真实菜单渲染、世界事务或局域网 |
 | server | `runGameTestServer` | 扫描与菜单资源、递归规划、余料/容量、事务回滚、见证攻击、规则与预算、缓存 | 不验证客户端帧或多设备延迟 |
-| inventory | `runClient -PcraftableClientSuite=inventory` | 原版配方书、筛选、C 制作、实体工作台、菜单材料移动、模式切换、药水效果、迟到确认回复隔离 | 不代表所有装备操作或真实两机体验 |
+| inventory | `runClient -PcraftableClientSuite=inventory` | 进世界后预热静态目录、首次浏览复用、原版配方书、筛选、C 制作、实体工作台、菜单材料移动、模式切换、药水效果、迟到确认回复隔离 | 不代表所有装备操作或真实两机体验 |
 | planning | `runClient -PcraftableClientSuite=planning` | 目录与调度、未知结论、Shift+C、候选/材质、数量/MAX、实际成本、见证确认、部分合成、双语界面和设置 | 不代表任意模组目录、硬件或网络条件 |
 | settings | `runClient -PcraftableClientSuite=settings` | 导航、草稿与持久化、权威规则、白名单、专业页、双语排版和清理恢复 | 不包含延期 MAX 或完整 planning |
 | diagnostic + lease | planning 加 `-PcraftableClientDiagnostic=lease` | 确认按钮的租约过期、同值续期和只读 MAX 等待 | 在租约场景后结束，不能作为 planning 全量证据 |
