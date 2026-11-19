@@ -2,8 +2,7 @@
 
 本页说明当前实现的模块、数据所有权和安全边界，不按开发阶段罗列曾经的结构。
 目前 M4 的交付合同与当时参数见 [M4 实施说明](14-m4-implementation.md)，实际验证范围见 [M4 验收](15-m4-acceptance.md)；
-现行设置和后续设计见 [Pre-M5 实施说明](16-pre-m5-transition.md)。Pre-M5 已于 2026-10-28 结束，
-M5 尚未开始，M6 与第二阶段 R1 仍只有设计合同。
+现行设置见 [Pre-M5 实施说明](16-pre-m5-transition.md)。M5 从静态配方预热开始实施，炉类边界见 [M5 实施计划](19-m5-implementation-plan.md)。
 
 构建、代码维护和贡献说明见[开发指南](../developer-guide.zh-CN.md)，
 生产入口、副作用和状态消费者的核对见 [17 行为链审计](17-production-behavior-audit.md#behavior)。
