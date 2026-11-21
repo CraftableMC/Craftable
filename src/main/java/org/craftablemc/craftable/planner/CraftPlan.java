@@ -3,7 +3,6 @@ package org.craftablemc.craftable.planner;
 import java.util.List;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.crafting.CraftingRecipe;
 import net.minecraft.world.item.crafting.RecipeHolder;
 
 /**
@@ -31,6 +30,7 @@ public record CraftPlan(ResourceLocation target, int requestedBatches, int compl
     }
 
     public boolean partial() { return completedBatches < requestedBatches; }
+    public boolean hasCooking() { return steps.stream().anyMatch(step -> step.gridSize() == 1); }
 
     /** 不论配方 ID 或源槽位如何，拒绝物料恒等变换；搜索、非可信见证重放和提交边界共用此规则。
      * 比较实际提取数量与全部交付（含余料/返还物及组件），真实压缩仍是变化。
@@ -125,15 +125,18 @@ public record CraftPlan(ResourceLocation target, int requestedBatches, int compl
         return values.stream().map(ItemStack::copy).toList();
     }
 
-    public record Step(RecipeHolder<CraftingRecipe> recipe, String path, int gridSize,
+    public record Step(RecipeHolder<?> recipe, String path, int gridSize,
             List<ItemStack> inputs, ItemStack output, List<ItemStack> remainders, List<Integer> inputOrigins) {
-        public Step(RecipeHolder<CraftingRecipe> recipe, String path, int gridSize,
+        public Step(RecipeHolder<?> recipe, String path, int gridSize,
                 List<ItemStack> inputs, ItemStack output, List<ItemStack> remainders) {
             this(recipe, path, gridSize, inputs, output, remainders,
                     java.util.Collections.nCopies(inputs.size(), -1));
         }
         public Step {
-            if ((gridSize != 2 && gridSize != 3) || inputs.size() != gridSize * gridSize || output.isEmpty()
+            boolean validInputs = gridSize == 1
+                    ? !inputs.isEmpty() && inputs.size() <= 9 && inputs.stream().allMatch(s -> s.getCount() == 1)
+                    : (gridSize == 2 || gridSize == 3) && inputs.size() == gridSize * gridSize;
+            if (!validInputs || output.isEmpty()
                     || inputOrigins.size() != inputs.size()) {
                 throw new IllegalArgumentException("Invalid recipe step");
             }

@@ -1,9 +1,11 @@
 package org.craftablemc.craftable.client.recipebook;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import net.minecraft.client.Minecraft;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.item.crafting.RecipeHolder;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -19,6 +21,7 @@ import org.craftablemc.craftable.network.CraftingDetailPayloads;
 import org.craftablemc.craftable.network.CraftingWire;
 import org.craftablemc.craftable.planner.*;
 import org.craftablemc.craftable.recipe.PlanningInput;
+import org.craftablemc.craftable.workstation.WorkstationCapability;
 
 /** 中文：客户端线程上的唯一只读规划调度器，复用值求解器而不读取或修改服务端容器。
  * 静态配方知识可跨菜单复用；动态证据只属于一个不可变资源身份，其授权租约可独立过期。
@@ -94,9 +97,16 @@ public final class ClientBrowsePlanner {
         if (connection != mc.getConnection()) { disconnect(); connection = mc.getConnection(); }
         var collection = mc.level.getRecipeManager().getRecipes();
         if (recipeCollection != collection) { recipeCollection = collection; recipesChanged(); }
-        boolean open = RecipeBookProjection.modeAllowed() && CraftableClientConfig.recipeBookEnhancementsEnabled()
-                && (RecipeBookProjection.component(mc.screen) != null || org.craftablemc.craftable.client.CraftingPlanOverlay.active());
-        if (!open) { closeView(); return; }
+        boolean enabled = RecipeBookProjection.modeAllowed() && CraftableClientConfig.recipeBookEnhancementsEnabled();
+        boolean open = enabled && (RecipeBookProjection.component(mc.screen) != null
+                || org.craftablemc.craftable.client.CraftingPlanOverlay.active());
+        if (!open) {
+            closeView();
+            // 中文：只预热已同步的静态目录。资源请求、搜索和授权仍由实际页面驱动。
+            // Warm only the synced static catalog. Resource requests, search and authority still require an active view.
+            if (enabled && !collection.isEmpty()) advanceCatalog(mc, collection, sliceStart);
+            return;
+        }
         if (menu != mc.player.containerMenu) {
             closeView(); menu = mc.player.containerMenu; menuId = mc.player.containerMenu.containerId;
             revision = ClientRequestSequence.next();
@@ -142,22 +152,20 @@ public final class ClientBrowsePlanner {
         }
         boolean fresh = grant != null && snapshot != null && grant.session().equals(snapshot.session())
                 && grant.resources() == snapshot.resources() && matchesRules(snapshot, grant) && now <= grant.expires();
-        if (grant == null) { ClientRecipeStatusStore.authorizeLocal(false); return; }
-        CATALOG.observe(connection, generation, collection, mc.level.registryAccess());
-        if (CATALOG.state() == PlanningInput.Catalog.State.BUILDING) {
+        if ((grant != null || !collection.isEmpty()) && advanceCatalog(mc, collection, sliceStart)) {
             ClientRecipeStatusStore.authorizeLocal(false);
-            long remaining = 2_000_000L - (System.nanoTime() - sliceStart);
-            if (remaining > 0) CATALOG.advance(remaining);
-            return; // 中文：目录和搜索不能在同 tick 各获 2ms。 English: Catalog and search never each receive a 2 ms slice in one tick.
+            return;
         }
-        if (CATALOG.state() != PlanningInput.Catalog.State.READY || snapshot == null || grant == null) return;
+        if (grant == null) { ClientRecipeStatusStore.authorizeLocal(false); return; }
+        if (!catalogReady() || snapshot == null) return;
         var currentPersonalMode = CraftableClientConfig.partialMode();
         var effectivePolicy = snapshot.directPreparation().executionPolicy().restrict(CraftableClientConfig.partialPolicy());
         var effectivePreparation = snapshot.directPreparation().restrict(effectivePolicy);
         boolean personalChanged = personalMode != currentPersonalMode;
         boolean rebind = input == null || !effectivePreparation.equals(boundPreparation);
         if (rebind) {
-            input = CATALOG.bind(snapshot.workbench(), snapshot.limitedCrafting(), snapshot.unlocked(), effectivePreparation);
+            input = CATALOG.bind(snapshot.workbench(), snapshot.limitedCrafting(), snapshot.unlocked(), effectivePreparation,
+                    snapshot.furnaceMask(), snapshot.maxFurnaceBatches());
             boundPreparation = effectivePreparation;
         }
         boolean agrees = input.fingerprint().equals(grant.fingerprint());
@@ -185,6 +193,16 @@ public final class ClientBrowsePlanner {
         // caps cached projections/queue scans on unusually fast machines.
         for (int dispatched = 0; dispatched < 64 && System.nanoTime() - sliceStart < 2_000_000L; dispatched++)
             if (!dispatch(sliceStart)) break;
+    }
+
+    /** 构建中只用本 tick 剩余预算，调用者将搜索留到下一 tick。
+     * In-progress builds use only the remaining tick budget and the caller defers search until the next tick. */
+    private static boolean advanceCatalog(Minecraft mc, Collection<RecipeHolder<?>> recipes, long sliceStart) {
+        CATALOG.observe(connection, generation, recipes, mc.level.registryAccess());
+        if (CATALOG.state() != PlanningInput.Catalog.State.BUILDING) return false;
+        long remaining = 2_000_000L - (System.nanoTime() - sliceStart);
+        if (remaining > 0) CATALOG.advance(remaining);
+        return true;
     }
 
     /** 中文：按有界 3:1 公平性续算现有任务，缓存投影也占前台回合；不为每个任务重开整段 tick 预算。
@@ -280,7 +298,7 @@ public final class ClientBrowsePlanner {
         var allRefs = snapshot.references();
         var search = new CraftSearch(input, mathematical(request, diagnostic), snapshot.sources(), SearchBudget.resumable(8_000_000L),
                 snapshot.maxPlanSteps(),
-                plan -> MainInventoryInsertion.simulate(inventory, snapshot.inventoryMaximum(), plan,
+                plan -> deferredDelivery(plan) ? null : MainInventoryInsertion.simulate(inventory, snapshot.inventoryMaximum(), plan,
                         playerRefs, allRefs, request.allowDrops()).failure()).withReachability(closure);
         requestCeiling(search, owner);
         var evidence = ClientRecipeStatusStore.evidence(request);
@@ -313,7 +331,7 @@ public final class ClientBrowsePlanner {
     public static org.craftablemc.craftable.planner.CraftPlan.Witness witness(CraftRequest request) {
         if (!ready() || request.partial()) return null;
         var displayed = org.craftablemc.craftable.client.CraftingPlanOverlay.reviewWitness(effective(request), scopeVersion);
-        if (displayed != null) return displayed;
+        if (displayed != null && displayed.steps().stream().noneMatch(step -> step.inputs().size() == 1)) return displayed;
         if (retainedRequest == null || retainedResult == null
                 || !effective(request).withPartial(false).equals(retainedRequest.withPartial(false))) return null;
         return boundedWitness(request, retainedResult);
@@ -326,7 +344,10 @@ public final class ClientBrowsePlanner {
         if (!ready() || request.partial() || result.code() != org.craftablemc.craftable.api.CraftingResultCode.CREATED
                 || !result.completeSearch()) return null;
         try {
-            var witness = result.plan().filter(plan -> !plan.partial())
+            // 炉步骤需服务端复验燃料/时长/返还物，不以旧合成格见证协议重放。
+            // Cooking needs server fuel/time/remainder validation, not the crafting-grid witness protocol.
+            var witness = result.plan().filter(plan -> !plan.partial()
+                            && plan.steps().stream().noneMatch(step -> step.gridSize() == 1))
                     .map(plan -> org.craftablemc.craftable.planner.CraftPlan.Witness.from(plan, snapshot)).orElse(null);
             return witness != null && CraftingDetailPayloads.fitsWitness(request, witness, Minecraft.getInstance().level.registryAccess())
                     ? witness : null;
@@ -342,6 +363,14 @@ public final class ClientBrowsePlanner {
                 && snapshot.session().equals(grant.session()) && snapshot.resources() == grant.resources()
                 && matchesRules(snapshot, grant)
                 && mc.level.getGameTime() <= grant.expires() && input.fingerprint().equals(grant.fingerprint());
+    }
+
+    /** 详情仅展示当前菜单已确认可用的工作站；等待新快照或续约时不展示旧状态。
+     * Details show confirmed stations for the current menu. Hide stale status while renewing the snapshot or lease. */
+    public static int availableWorkstations() {
+        var mc = Minecraft.getInstance();
+        if (mc.player == null || mc.player.containerMenu != menu || mc.getConnection() != connection || !ready()) return 0;
+        return snapshot.furnaceMask() | (snapshot.workbench() ? WorkstationCapability.CRAFTING_3X3.bit() : 0);
     }
 
     /** 中文：从原版按钮组构建有界根卡片，不将其当作递归 OR 需求。
@@ -513,9 +542,9 @@ public final class ClientBrowsePlanner {
     private static void retainMaximum(CraftRequest request, SearchResult result) {
         if (result.plan().isEmpty() || result.plan().orElseThrow().partial()) return;
         var plan = result.plan().orElseThrow();
-        var delivery = MainInventoryInsertion.simulate(snapshot.inventory(), snapshot.inventoryMaximum(),
+        var delivery = deferredDelivery(plan) ? null : MainInventoryInsertion.simulate(snapshot.inventory(), snapshot.inventoryMaximum(),
                 plan, snapshot.playerReferences(), snapshot.references(), request.allowDrops());
-        var view = PlanView.from(input, request, result, delivery.drops(),
+        var view = PlanView.from(input, request, result, delivery == null ? List.of() : delivery.drops(),
                 snapshot.sources().stream().map(ResourceLedger.Source::stack).toList());
         var candidate = new org.craftablemc.craftable.execution.CraftingService.Draft(
                 CraftingDetailPayloads.NO_TOKEN, view, new PlanView.Choices(List.of(), false));
@@ -532,7 +561,7 @@ public final class ClientBrowsePlanner {
 
     private static void publishPreview(DetailWork work, SearchResult result) {
         detail = null;
-        var delivery = result.plan().map(plan -> MainInventoryInsertion.simulate(snapshot.inventory(),
+        var delivery = result.plan().filter(plan -> !deferredDelivery(plan)).map(plan -> MainInventoryInsertion.simulate(snapshot.inventory(),
                 snapshot.inventoryMaximum(), plan, snapshot.playerReferences(), snapshot.references(), work.request.allowDrops()));
         var view = PlanView.from(input, work.request, result,
                 delivery.map(MainInventoryInsertion.Delivery::drops).orElse(List.of()),
@@ -585,11 +614,14 @@ public final class ClientBrowsePlanner {
         if (!accepts(value.menuId(), value.revision())) return;
         if (value.recipes() < recipeVersion) return;
         if (snapshot != null && snapshot.session().equals(value.session()) && value.resources() < snapshot.resources()) return;
-        if (recipeVersion != value.recipes()) {
-            recipeVersion = value.recipes(); generation = new Object(); CATALOG.clear(); input = null;
+        // 中文：首个租约只绑定服务端版本，复用按本地同步世代预热的目录。使用前仍核对指纹。
+        // The first lease binds the server version to the prewarmed local catalog. Consumption still checks the fingerprint.
+        if (recipeVersion >= 0 && recipeVersion != value.recipes()) {
+            generation = new Object(); CATALOG.clear(); input = null;
             ClientRecipeStatusStore.beginLocal(); // 中文：配方重载不同于库存刷新。 English: A recipe reload is not an inventory refresh.
             resetCalculations();
         }
+        recipeVersion = value.recipes();
         grant = value;
         org.craftablemc.craftable.client.menu.AmbientInventoryEvents.receiveRules(value.settings(), value.workbench());
         if (snapshot != null && (!snapshot.session().equals(value.session()) || snapshot.resources() != value.resources())) {
@@ -637,9 +669,16 @@ public final class ClientBrowsePlanner {
     private static boolean matchesRules(BrowsingSnapshot values, CraftingDetailPayloads.BrowseLease lease) {
         var rules = lease.rules();
         return values.maxPlanSteps() == rules.maxPlanSteps() && values.maxBatches() == rules.maxBatches()
+                && values.workbench() == lease.workbench() && values.furnaceMask() == lease.furnaceMask()
+                && values.timeCompression() == rules.timeCompression() && values.maxFurnaceBatches() == rules.maxFurnaceBatches()
                 && values.directPreparation().equals(rules.directPreparation())
                 && values.allowDrops() == (rules.surplusDelivery()
                         == org.craftablemc.craftable.config.CraftableServerConfig.SurplusDelivery.DROP_OVERFLOW);
+    }
+
+    /** 关闭压缩的炉链在完成后领取；规划时不能用当前容量拒绝未来交付。 / Uncompressed cooking is collected later; current capacity cannot reject that future delivery during planning. */
+    private static boolean deferredDelivery(CraftPlan plan) {
+        return !snapshot.timeCompression() && plan.hasCooking();
     }
 
     private static void abandon(Task task) {
@@ -733,6 +772,7 @@ public final class ClientBrowsePlanner {
     public static long lastTickNanos() { return lastTickNanos; }
     public static long foregroundSlices() { return foregroundSlices; }
     public static long hiddenSlices() { return hiddenSlices; }
+    public static boolean catalogReady() { return CATALOG.state() == PlanningInput.Catalog.State.READY; }
     public static int catalogBuilds() { return CATALOG.builds(); }
     static final class Turns {
         private int consecutive;

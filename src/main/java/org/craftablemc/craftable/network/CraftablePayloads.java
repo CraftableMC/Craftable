@@ -9,7 +9,7 @@ import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
  * ClientPayloadHandler runs only inside client-inbound main-thread tasks; execution requests still require service-owned authoritative validation.
  */
 public final class CraftablePayloads {
-    public static final String PROTOCOL_VERSION = "15";
+    public static final String PROTOCOL_VERSION = "17";
 
     private CraftablePayloads() {}
 
@@ -25,6 +25,10 @@ public final class CraftablePayloads {
                 (p,c) -> c.enqueueWork(() -> ClientPayloadHandler.handle(p)));
         registrar.playToClient(CraftingDetailPayloads.BrowseChunk.TYPE, CraftingDetailPayloads.BrowseChunk.CODEC,
                 (p,c) -> c.enqueueWork(() -> ClientPayloadHandler.handle(p)));
+        registrar.playToClient(FurnaceProgressPayload.TYPE, FurnaceProgressPayload.CODEC, (p, c) -> {
+            var connection = c.connection();
+            c.enqueueWork(() -> ClientPayloadHandler.handle(p, connection));
+        });
         registrar.playToServer(CraftingDetailPayloads.PreviewRequest.TYPE, CraftingDetailPayloads.PreviewRequest.CODEC,
                 CraftablePayloadHandlers::handlePlanPreview);
         registrar.playToClient(CraftingDetailPayloads.PreviewResponse.TYPE, CraftingDetailPayloads.PreviewResponse.CODEC,

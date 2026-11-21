@@ -26,6 +26,9 @@
 | 按钮颜色借用其他材质的成功、隐藏项或陈旧结论，或仍靠原版底图组合出红/粉 | `RecipeButtonVisualStateTest` 的未知/当前结论优先级；`OutputVariantScenario` 的实际轮播、清空/恢复材料、授权过期、投影输入边界及真实背景像素，随后检查当前材质的 C/详情与精确消耗 | 仅检查枚举返回值证明实际渲染正确；投影输入断言等同真实筛选操作；粉色授予当前材质制作权限 |
 | 未知、预算耗尽、结构/网络体量超限被当成可执行承诺 | 预算/调度/快照单测与 admission、见证、容量、批量 GameTest；完整客户端 unknown/取消回归 | 冻结时钟功能检查证明任意硬件都在 8 ms 内完成 |
 | 失败消费、返还/余料丢失、共享批次重复扣料、回滚遗漏 | 事务/菜单资源/随机图/容量 GameTest 和实际 C/确认客户端；精确守恒与零消费反例 | 只检查最终结果码 |
+| 炉型用错、燃料不足仍启动、余火与配方木材被重复使用、返还容器丢失 | `FurnaceScannerGameTests` 和 `FurnaceChainGameTests` 验证原版端点、实际投入和最终物品，含高炉减半燃烧时长 | 只验证炉类标志或仅核对计算出的燃烧 tick |
+| 关界面停止加工，炉被占用仍前进，满包丢产物，或退款与成品同时发放 | `FurnaceProgressScenario` 走真实请求、关页和三种界面；`FurnaceJobsGameTests` 检查实际 tick、存档往返、满包和拆炉反例 | 界面截图代替守恒断言，或同进程存档往返代替崩溃恢复与独立重启 |
+| 同一炉类产物显示多次、合并后选错路线、详情显示旧工作站、篝火要求燃料或熄灭后继续 | `FurnaceProgressScenario` 检查铁锭和牛排分组、真实 C 请求与当前工作站；服务端覆盖两种篝火的无燃料加工、熄灭暂停、再点燃和替换退款 | 只检查配方已同步或工作站枚举存在 |
 | 新鲜资源变化后复用旧身份，或诊断失败污染已证明的完整结论 | `RecipeStatusLifecycleTest` 等 lifecycle/continuation 单测、`DiagnosticLifecycleScenario` 与真实 browse 规则变更 | 把必要的受控调度/预算适配误删为“反射多余” |
 | 字节接收停滞后只续租而不恢复，或补传无限延长期限 | `SnapshotReceiverTest` 一次/首次期限/摘要/关闭边界；`BrowseTransferGameTests` 实际发送状态；`SnapshotResyncScenario` 实际请求→轮询→头/分块→解码反例，关闭补传分支应失败 | 仅测 retry helper、自然故障率、任意负载恢复保证或零客户端重算 |
 | MAX 将较小数量容量失败误作所有更大量失败 | `PlanningQuantityScenario` 真实满背包两根骨头：一份失败、两份腾槽，MAX=2；单测保留未知上界/材料证书边界 | 仅注入 CREATED 就声称覆盖真实 MAX 调度 |

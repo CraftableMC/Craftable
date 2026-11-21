@@ -42,7 +42,7 @@ final class NativeConfigOption<T> {
     private static int order(ModConfigSpec.ConfigValue<?> value) {
         var order = List.of("recipeBookEnhancements", "unlockedOnly", "detailedFailureFeedback", "partialPolicy",
                 "allowSurplusDrops", "doublePressMillis", "horizontalRadius", "verticalRadius", "includeEnderChest",
-                "directPreparationMode", "surplusDelivery", "maxCraftBatch", "maxPlanSteps",
+                "directPreparationMode", "surplusDelivery", "maxCraftBatch", "maxPlanSteps", "timeCompression", "maxFurnaceBatches",
                 "directPreparationAllowedRecipes");
         int index = order.indexOf(value.getPath().getLast());
         return index < 0 ? order.size() : index;

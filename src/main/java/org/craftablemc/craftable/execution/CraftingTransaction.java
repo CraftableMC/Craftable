@@ -2,10 +2,16 @@ package org.craftablemc.craftable.execution;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import net.minecraft.core.BlockPos;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.stats.Stats;
+import net.minecraft.util.Mth;
 import net.minecraft.world.SimpleContainer;
+import net.minecraft.world.entity.ExperienceOrb;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
 import net.neoforged.neoforge.common.NeoForge;
@@ -17,6 +23,9 @@ import org.craftablemc.craftable.environment.ContainerEndpoint;
 import org.craftablemc.craftable.environment.EndpointKind;
 import org.craftablemc.craftable.environment.EnvironmentSnapshot;
 import org.craftablemc.craftable.planner.CraftPlan;
+import org.craftablemc.craftable.recipe.FurnaceRecipe;
+import org.craftablemc.craftable.workstation.FurnaceWorkstation;
+import org.craftablemc.craftable.workstation.WorkstationCapability;
 
 /**
  * 唯一服务端整链提交器：同步提取、发布背包及可选余料实体，失败恢复本事务的前像。
@@ -29,8 +38,18 @@ final class CraftingTransaction {
 
     static CraftingResultCode execute(ServerPlayer player, CraftPlan plan, EnvironmentSnapshot snapshot,
             MainInventoryInsertion.Delivery delivery) {
+        return execute(player, plan, snapshot, delivery, true);
+    }
+
+    static CraftingResultCode execute(ServerPlayer player, CraftPlan plan, EnvironmentSnapshot snapshot,
+            MainInventoryInsertion.Delivery delivery, boolean timeCompression) {
         if (!CraftingService.validContext(player)) return CraftingResultCode.INVALID_CONTEXT;
         if (!plan.hasMaterialChange()) return CraftingResultCode.MISSING_INGREDIENTS;
+        boolean timed = !timeCompression && plan.hasCooking();
+        var work = cookingWork(player, plan, snapshot);
+        if (work == null) return CraftingResultCode.ENVIRONMENT_CHANGED;
+        if (timed && !FurnaceJobs.canStart(player, work)) return CraftingResultCode.FURNACE_BUSY;
+        if (timed && !deferredFitsEmpty(player, plan)) return CraftingResultCode.NO_OUTPUT_SPACE;
         // 执行前再次检查端点/槽内容，不因规划和容量已通过就删除这一最终边界。
         // Recheck endpoints/slot values before execution; successful planning and fitting do not replace this final boundary.
         List<SlotBackup> otherSlots = new ArrayList<>();
@@ -44,10 +63,11 @@ final class CraftingTransaction {
                 otherSlots.add(new SlotBackup(endpoint, extraction.slot(), extraction.expected()));
             }
         }
-        if (delivery.failure() != null) return delivery.failure();
+        if (!timed && delivery.failure() != null) return delivery.failure();
         List<ItemStack> playerBefore = new ArrayList<>();
         for (int slot = 0; slot < 36; slot++) playerBefore.add(player.getInventory().getItem(slot).copy());
         List<ItemEntity> created = new ArrayList<>();
+        List<ItemStack> paid = timed ? new ArrayList<>() : List.of();
         CraftingResultCode failed = CraftingResultCode.ENVIRONMENT_CHANGED;
         try {
             for (var extraction : plan.extractions()) {
@@ -57,6 +77,21 @@ final class CraftingTransaction {
                         || !ItemStack.isSameItemSameComponents(removed, extraction.expected())) {
                     throw new Rejected();
                 }
+                if (timed) paid.add(removed.copy());
+            }
+            if (timed) {
+                // 订单发布是收料事务的最后一步。失败由同一前像回滚。
+                // Publishing the order is the last debit step; failure restores the same preimage.
+                var produced = new ArrayList<>(plan.primary());
+                produced.addAll(plan.surplus());
+                markChanged(player, snapshot, plan);
+                var completed = plan.steps().stream().map(step -> new FurnaceJobs.CompletedStep(
+                        step.recipe().id(), step.gridSize(), step.inputs(), step.output())).toList();
+                if (!FurnaceJobs.start(player, work, paid, produced, cookingRewards(plan), completed)) {
+                    failed = CraftingResultCode.FURNACE_BUSY;
+                    throw new Rejected();
+                }
+                return CraftingResultCode.FURNACE_QUEUED;
             }
             MainInventoryInsertion.publish(player.getInventory(), delivery);
             for (ItemStack stack : delivery.drops()) {
@@ -104,7 +139,98 @@ final class CraftingTransaction {
         // 提交后的通知不能把已交付的合成改报失败，也不能触发退还。
         // Post-commit observers cannot turn delivered work into failure or trigger a refund.
         notifyCrafted(player, plan, created);
+        if (!work.isEmpty()) awardCookingExperience(player, cookingRewards(plan));
         return plan.partial() ? CraftingResultCode.PARTIAL_CREATED : CraftingResultCode.CREATED;
+    }
+
+    /** 防止不可交付的成品或退款永久占用订单。 / Reject delivery and refund payloads that cannot fit even in an empty pack. */
+    private static boolean deferredFitsEmpty(ServerPlayer player, CraftPlan plan) {
+        var empty = Collections.nCopies(36, ItemStack.EMPTY);
+        int maximum = player.getInventory().getMaxStackSize();
+        var paid = plan.extractions().stream().map(input -> input.expected().copyWithCount(input.count())).toList();
+        return MainInventoryInsertion.fit(empty, maximum, plan.primary(), plan.surplus(), false).failure() == null
+                && MainInventoryInsertion.fit(empty, maximum, paid, List.of(), false).failure() == null;
+    }
+
+    private static List<FurnaceJobs.Work> cookingWork(ServerPlayer player, CraftPlan plan, EnvironmentSnapshot snapshot) {
+        if (!plan.hasCooking()) return List.of();
+        var level = player.serverLevel();
+        var stations = new EnumMap<WorkstationCapability, BlockPos>(WorkstationCapability.class);
+        var result = new ArrayList<FurnaceJobs.Work>();
+        for (var step : plan.steps()) {
+            if (step.gridSize() != 1) continue;
+            var furnace = FurnaceRecipe.of(step.recipe().value());
+            if (furnace == null) return null;
+            var position = stations.get(furnace.station());
+            if (position == null) {
+                position = snapshot.workstations().stream().filter(endpoint -> endpoint.capability() == furnace.station())
+                        .map(endpoint -> endpoint.position()).filter(java.util.Objects::nonNull)
+                        .filter(pos -> FurnaceWorkstation.capability(level, pos) == furnace.station()
+                                && FurnaceWorkstation.ticking(level, pos) && FurnaceWorkstation.idle(level, pos))
+                        .findFirst().orElse(null);
+                if (position == null) return null;
+                stations.put(furnace.station(), position);
+            }
+            result.add(new FurnaceJobs.Work(position, furnace.station(), furnace.ticks()));
+        }
+        return result;
+    }
+
+    private static List<FurnaceJobs.Reward> cookingRewards(CraftPlan plan) {
+        var rewards = new LinkedHashMap<ResourceLocation, FurnaceJobs.Reward>();
+        for (var step : plan.steps()) {
+            if (step.gridSize() != 1) continue;
+            var cooking = FurnaceRecipe.of(step.recipe().value());
+            if (cooking.station() == WorkstationCapability.CAMPFIRE) continue;
+            float xp = cooking.experience();
+            rewards.compute(step.recipe().id(), (id, old) -> new FurnaceJobs.Reward(id, old == null ? 1 : old.batches() + 1, xp));
+        }
+        return List.copyOf(rewards.values());
+    }
+
+    /** 交付前重新计算主背包容量。失败始终保留订单的全部物品。
+     * Recheck main-inventory capacity at collection. Failure leaves the entire order available. */
+    static boolean deliverDeferred(ServerPlayer player, List<ItemStack> items) {
+        var inventory = player.getInventory();
+        var before = MainInventoryInsertion.copyMainInventory(inventory);
+        var delivery = MainInventoryInsertion.fit(before, inventory.getMaxStackSize(), items, List.of(), false);
+        if (delivery.failure() != null) return false;
+        try {
+            MainInventoryInsertion.publish(inventory, delivery);
+            inventory.setChanged();
+        } catch (RuntimeException exception) {
+            for (int slot = 0; slot < before.size(); slot++) inventory.setItem(slot, before.get(slot));
+            inventory.setChanged();
+            return false;
+        }
+        // 背包已经交付，网络同步异常不得令同一订单重试。 / Sync errors cannot retry an already delivered order.
+        try { player.containerMenu.broadcastChanges(); }
+        catch (RuntimeException exception) { Craftable.LOGGER.error("Furnace delivery sync failed", exception); }
+        return true;
+    }
+
+    static void awardCookingExperience(ServerPlayer player, List<FurnaceJobs.Reward> rewards) {
+        for (var reward : rewards) {
+            try {
+                float exact = reward.batches() * reward.xpPerBatch();
+                int experience = Mth.floor(exact);
+                var level = player.serverLevel();
+                if (level.random.nextFloat() < exact - experience) experience++;
+                ExperienceOrb.award(level, player.position(), experience);
+                player.getServer().getRecipeManager().byKey(reward.recipe())
+                        .ifPresent(recipe -> player.awardRecipes(List.of(recipe)));
+            } catch (RuntimeException exception) {
+                Craftable.LOGGER.error("Post-commit furnace reward failed for {}", reward.recipe(), exception);
+            }
+        }
+    }
+
+    static void notifyDeferred(ServerPlayer player, List<FurnaceJobs.CompletedStep> steps) {
+        if (steps.stream().anyMatch(step -> step.gridSize() == 3)) notifyWorkbench(player);
+        for (var step : steps) {
+            var holder = player.getServer().getRecipeManager().byKey(step.recipe()).orElse(null);
+            notifyStep(player, step.recipe(), holder, step.output(), step.inputs(), step.gridSize() == 1);
+        }
     }
 
     private static ItemEntity captureVanillaDrop(ServerPlayer player, ItemStack stack) {
@@ -138,26 +264,9 @@ final class CraftingTransaction {
         // A Craftable action is one virtual interaction, even for many batches
         // or intermediates. Count only a committed chain actually using 3x3;
         // previews, rollbacks and 2x2-only partial preparation never count.
-        if (plan.steps().stream().anyMatch(step -> step.gridSize() == 3)) {
-            try { player.awardStat(Stats.INTERACT_WITH_CRAFTING_TABLE); }
-            catch (RuntimeException exception) {
-                Craftable.LOGGER.error("Post-commit workbench statistic failed", exception);
-            }
-        }
+        if (plan.steps().stream().anyMatch(step -> step.gridSize() == 3)) notifyWorkbench(player);
         for (var step : plan.steps()) {
-            // 提交后观察者也看见中间合成；一个监听器失败既不能退款，也不能阻止后续步骤通知。
-            // Post-commit observers also see intermediate crafts. One failing
-            // listener must neither refund the chain nor suppress later steps.
-            try {
-                ItemStack output = step.output();
-                output.onCraftedBy(player.serverLevel(), player, output.getCount());
-                EventHooks.firePlayerCraftingEvent(player, output,
-                        new SimpleContainer(step.inputs().toArray(ItemStack[]::new)));
-                player.triggerRecipeCrafted(step.recipe(), step.inputs());
-                player.awardRecipes(Collections.singleton(step.recipe()));
-            } catch (RuntimeException exception) {
-                Craftable.LOGGER.error("Post-commit recipe observer failed for {}", step.recipe().id(), exception);
-            }
+            notifyStep(player, step.recipe().id(), step.recipe(), step.output(), step.inputs(), step.gridSize() == 1);
         }
         for (ItemEntity entity : drops) {
             try {
@@ -169,6 +278,31 @@ final class CraftingTransaction {
                 // report failure after the player already received the items.
                 Craftable.LOGGER.error("Post-commit drop statistic failed", exception);
             }
+        }
+    }
+
+    private static void notifyWorkbench(ServerPlayer player) {
+        try { player.awardStat(Stats.INTERACT_WITH_CRAFTING_TABLE); }
+        catch (RuntimeException exception) { Craftable.LOGGER.error("Post-commit workbench statistic failed", exception); }
+    }
+
+    /** 两种交付共用逐步通知，监听器失败不会重试物品交付。
+     * Share step notifications across both delivery modes. An observer failure cannot replay items. */
+    private static void notifyStep(ServerPlayer player, ResourceLocation id,
+            net.minecraft.world.item.crafting.RecipeHolder<?> holder, ItemStack output, List<ItemStack> inputs, boolean cooking) {
+        try {
+            output.onCraftedBy(player.serverLevel(), player, output.getCount());
+            if (cooking) {
+                EventHooks.firePlayerSmeltedEvent(player, output);
+            } else {
+                EventHooks.firePlayerCraftingEvent(player, output, new SimpleContainer(inputs.toArray(ItemStack[]::new)));
+                if (holder != null) {
+                    player.triggerRecipeCrafted(holder, inputs);
+                    player.awardRecipes(List.of(holder));
+                }
+            }
+        } catch (RuntimeException exception) {
+            Craftable.LOGGER.error("Post-commit recipe observer failed for {}", id, exception);
         }
     }
 

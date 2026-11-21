@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.core.NonNullList;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemStack;
@@ -297,7 +298,7 @@ final class GraphPresentationScenario {
         var tooltipMethod = CraftingPlanOverlay.class.getDeclaredMethod("candidateTooltip", PlanView.Candidate.class);
         tooltipMethod.setAccessible(true);
         var lines = ((List<Component>) tooltipMethod.invoke(overlay, candidate)).stream().map(Component::getString).toList();
-        require(lines.size() == 4 && lines.getFirst().equals(label) && lines.get(1).equals(text("candidate_grid", 3, 3))
+        require(lines.getFirst().equals(label) && lines.get(1).equals(text("candidate_workbench", Items.CRAFTING_TABLE.getDescription()))
                 && lines.contains(text("recipe_inputs") + " " + amount(3, Items.GOLD_INGOT))
                 && lines.contains(text("recipe_inputs") + " " + amount(2, Items.STICK))
                 && lines.stream().noneMatch(s -> s.contains("\n") || s.contains("minecraft:") || s.contains("golden_pickaxe")),
@@ -329,6 +330,42 @@ final class GraphPresentationScenario {
         var b = Ingredient.of(Items.OAK_PLANKS, Items.BIRCH_PLANKS, Items.SPRUCE_PLANKS, Items.ACACIA_PLANKS);
         require(((List<?>) inputMethod.invoke(null, List.of(a, b))).size() == 2,
                 "OR sets sharing only their displayed first three options were merged");
+
+        var level = Minecraft.getInstance().level;
+        var recipes = level.getRecipeManager();
+        var stick = recipes.byKey(id("stick")).orElseThrow().value();
+        var stickPattern = RecipeCardPattern.of(stick, 2);
+        require(stickPattern != null && !stickPattern.shapeless() && stickPattern.gridSize() == 2
+                && stickPattern.ingredient(0, 0).test(stack(Items.OAK_PLANKS, 1))
+                && stickPattern.ingredient(0, 1).test(stack(Items.OAK_PLANKS, 1))
+                && stickPattern.ingredient(1, 0).isEmpty() && stickPattern.ingredient(1, 1).isEmpty(),
+                "Chooser did not preserve the vertical stick pattern in a 2x2 grid");
+        var chestRecipe = recipes.byKey(id("chest")).orElseThrow().value();
+        var chestPattern = RecipeCardPattern.of(chestRecipe, 3);
+        require(chestPattern != null && chestPattern.ingredient(1, 1).isEmpty()
+                && chestPattern.ingredient(2, 2).test(stack(Items.BIRCH_PLANKS, 1))
+                && RecipeCardPattern.of(chestRecipe, 4) == null, "Chooser guessed a grid or removed the chest pattern's central gap");
+        var fromBlock = recipes.byKey(id("iron_ingot_from_iron_block")).orElseThrow().value();
+        var unshaped = RecipeCardPattern.of(fromBlock, 2);
+        require(unshaped != null && unshaped.shapeless(), "Iron block unpacking was presented as a fixed arrangement");
+
+        var cookingIds = List.of("iron_ingot_from_smelting_raw_iron", "iron_ingot_from_blasting_raw_iron",
+                "cooked_beef_from_smoking", "cooked_beef_from_campfire_cooking");
+        var stations = List.of(Items.FURNACE, Items.BLAST_FURNACE, Items.SMOKER, Items.CAMPFIRE);
+        // 同一炉料与产物的路线仍须显示不同工作站，炉料图样也不能变成工作台格子。
+        // Routes with identical input and output still need distinct station labels and a single cooking input.
+        for (int i = 0; i < cookingIds.size(); i++) {
+            var holder = recipes.byKey(id(cookingIds.get(i))).orElseThrow();
+            var recipe = holder.value();
+            var pattern = RecipeCardPattern.of(recipe, 1);
+            require(pattern != null && pattern.gridSize() == 1 && pattern.cooking() != null
+                    && pattern.ingredient(0, 0).test(stack(i < 2 ? Items.RAW_IRON : Items.BEEF, 1)),
+                    "Cooking pattern lost the native single ingredient for " + holder.id());
+            var route = new PlanView.Candidate(holder.id(), recipe.getResultItem(level.registryAccess()), 1, null);
+            var stationRow = ((List<Component>) tooltipMethod.invoke(overlay, route)).get(1).getString();
+            require(stationRow.equals(text(i == 3 ? "candidate_fuelless" : "candidate_fueled", stations.get(i).getDescription())),
+                    "Cooking candidate mislabeled workstation or fuel requirement: " + stationRow);
+        }
     }
 
     private static void verifyExplanationBranches() throws Exception {

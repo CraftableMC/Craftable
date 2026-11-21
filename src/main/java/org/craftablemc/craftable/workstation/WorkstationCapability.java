@@ -4,5 +4,17 @@ package org.craftablemc.craftable.workstation;
  * Vanilla workstation abilities understood by environment snapshots; presence grants neither player nor material authority. */
 public enum WorkstationCapability {
     CRAFTING_2X2,
-    CRAFTING_3X3
+    CRAFTING_3X3,
+    FURNACE,
+    BLAST_FURNACE,
+    SMOKER,
+    CAMPFIRE;
+
+    // 已有顺序也是同步能力位的顺序；新增值只能追加，不能重排。
+    // Existing order defines the synchronized bits. Append new values; never reorder them.
+    public static final int COOKING_MASK = FURNACE.bit() | BLAST_FURNACE.bit() | SMOKER.bit() | CAMPFIRE.bit();
+
+    public int bit() { return 1 << ordinal(); }
+
+    public boolean cooking() { return (bit() & COOKING_MASK) != 0; }
 }

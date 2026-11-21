@@ -245,6 +245,7 @@ public final class CraftingWire {
             buffer.writeVarLong(value.recipes());
             buffer.writeVarLong(value.resources());
             buffer.writeBoolean(value.workbench());
+            buffer.writeVarInt(value.furnaceMask());
             buffer.writeBoolean(value.limitedCrafting());
             buffer.writeVarInt(value.unlocked().size());
             for (var recipe : value.unlocked().stream().sorted(java.util.Comparator.comparing(Object::toString)).toList())
@@ -253,6 +254,8 @@ public final class CraftingWire {
             buffer.writeVarInt(value.maxBatches());
             buffer.writeVarInt(value.maxPlanSteps());
             SettingsPayloads.writeDirectPreparation(buffer, value.directPreparation());
+            buffer.writeBoolean(value.timeCompression());
+            buffer.writeVarInt(value.maxFurnaceBatches());
             buffer.writeVarInt(value.inventoryMaximum());
             for (var stack : value.inventory()) ItemStack.OPTIONAL_STREAM_CODEC.encode(buffer, stack);
             buffer.writeVarInt(value.inputs().size());
@@ -291,10 +294,10 @@ public final class CraftingWire {
         private final List<org.craftablemc.craftable.environment.BrowsingSnapshot.Input> inputs = new ArrayList<>();
         private java.util.UUID session;
         private long recipes, resources;
-        private boolean workbench, limited, drops, closed;
+        private boolean workbench, limited, drops, timeCompression, closed;
         private org.craftablemc.craftable.config.DirectPreparationPolicy directPreparation;
         private Phase phase = Phase.HEADER;
-        private int unlockCount, sourceCount, batches, steps, maximum;
+        private int unlockCount, sourceCount, batches, steps, maximum, furnaceMask, furnaceBatches;
         private org.craftablemc.craftable.environment.BrowsingSnapshot result;
 
         public SnapshotDecoder(byte[] data, net.minecraft.core.RegistryAccess registries) {
@@ -313,7 +316,9 @@ public final class CraftingWire {
                         case HEADER -> {
                             session = buffer.readUUID(); recipes = buffer.readVarLong(); resources = buffer.readVarLong();
                             if (recipes < 0 || resources < 0) throw new IllegalArgumentException("Negative snapshot version");
-                            workbench = buffer.readBoolean(); limited = buffer.readBoolean();
+                            workbench = buffer.readBoolean(); furnaceMask = buffer.readVarInt(); limited = buffer.readBoolean();
+                            if ((furnaceMask & ~org.craftablemc.craftable.workstation.WorkstationCapability.COOKING_MASK) != 0)
+                                throw new IllegalArgumentException("Invalid snapshot furnace capabilities");
                             unlockCount = count(buffer, org.craftablemc.craftable.environment.BrowsingSnapshot.MAX_UNLOCKED);
                             phase = Phase.UNLOCKED_RECIPES;
                         }
@@ -328,6 +333,8 @@ public final class CraftingWire {
                             batches = count(buffer, CraftRequest.MAX_BATCHES);
                             steps = org.craftablemc.craftable.planner.SearchBudget.requireStepLimit(buffer.readVarInt());
                             directPreparation = SettingsPayloads.readDirectPreparation(buffer);
+                            timeCompression = buffer.readBoolean();
+                            furnaceBatches = count(buffer, org.craftablemc.craftable.config.CraftableServerConfig.MAX_MAX_FURNACE_BATCHES);
                             maximum = count(buffer, 99); phase = Phase.INVENTORY;
                         }
                         case INVENTORY -> {
@@ -342,7 +349,8 @@ public final class CraftingWire {
                                 // Publish only after complete parsing with no trailing bytes; intermediate collections never become usable browsing snapshots.
                                 if (buffer.isReadable()) throw new IllegalArgumentException("Trailing snapshot bytes");
                                 result = new org.craftablemc.craftable.environment.BrowsingSnapshot(session, recipes, resources,
-                                        workbench, limited, unlocked, drops, batches, steps, directPreparation, maximum, inventory, inputs);
+                                        workbench, limited, unlocked, drops, batches, steps, directPreparation, maximum, inventory, inputs,
+                                        furnaceMask, timeCompression, furnaceBatches);
                                 close(); return true;
                             }
                         }

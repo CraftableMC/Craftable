@@ -91,6 +91,8 @@ Craftable 不开发独立的类 JEI 风格主浏览器。第一阶段增强原�
 | `crafting.surplusDelivery` | `REQUIRE_SPACE` | 可改 DROP_OVERFLOW；主产物必须入包，仅溢出余料可以丢弃 |
 | `crafting.maxCraftBatch` | `64` | 1–64 次完整根配方；根与中间实际步骤另受 `maxPlanSteps` 限制 |
 | `crafting.maxPlanSteps` | `128` | 1–256 次整链实际配方执行，包含根批次与中间步骤；调高不增大时间、状态或内存预算 |
+| `crafting.timeCompression` | `true` | 开启时立即完成炉类步骤，关闭时扣料后随炉子计时 |
+| `crafting.maxFurnaceBatches` | `64` | 1–64 次，累计计算整条链里的所有炉类步骤 |
 | `crafting.directPreparationMode` | `CUSTOM` | “部分合成设置”：DISABLED/REQUIRE_CONFIRMATION/CUSTOM/ALL_SUPPORTED，显示为禁止部分合成/全部需确认/白名单免确认/全部免确认；切换不删除白名单 |
 | `crafting.directPreparationAllowedRecipes` | 显式 32 项预设 | “免确认配方 ID”：CUSTOM 中在表内免额外确认，不在表内需确认；最多 128 项、每项最多 128 字符；空表不免确认任何配方 |
 
@@ -223,6 +225,6 @@ M4 的阶段策略和预算见 [实施说明](14-m4-implementation.md#limits)，
 
 ### 7.2 联机规则同步
 
-当前使用协议 15，联机各端须使用同一构建。世界是否允许部分合成从 `directPreparation` 模式派生，`CraftingRules`、`BrowsingSnapshot` 和规则编解码使用同一策略。设置请求与响应只带有界的规则值及请求序号，独立限流。浏览租约和资源快照须匹配同一份规则，服务端拒绝基于旧规则的确认。各次规则调整与验证结果见 [Pre-M5 验收](18-pre-m5-acceptance.md)，当前传输边界见[技术架构](02-architecture.md#transport)。
+当前使用协议 17，联机各端须使用同一构建。设置请求与响应只带有界规则值及请求序号，独立限流。浏览租约和资源快照须匹配同一份部分合成规则、加工工作站能力、时间压缩规则和批量限制。服务端拒绝基于旧规则的确认。见[技术架构](02-architecture.md#transport)。
 
 具体界面与反馈决策见 [ADR-0003](adr/0003-vanilla-feedback-and-settings-surfaces.md)。

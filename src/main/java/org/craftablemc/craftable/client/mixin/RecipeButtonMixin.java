@@ -6,8 +6,11 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.screens.recipebook.RecipeButton;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.network.chat.contents.TranslatableContents;
 import net.minecraft.resources.ResourceLocation;
 import org.craftablemc.craftable.api.CraftingStatus;
+import org.craftablemc.craftable.client.CraftableKeyMappings;
 import org.craftablemc.craftable.client.recipebook.*;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -73,6 +76,13 @@ public abstract class RecipeButtonMixin extends AbstractWidget {
         currentIndex = Math.floorMod(currentIndex, size);
     }
 
+    @Redirect(method = "updateWidgetNarration", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/network/chat/Component;translatable(Ljava/lang/String;)Lnet/minecraft/network/chat/MutableComponent;"))
+    private MutableComponent craftable$narrateDetailsGesture(String key) {
+        if (key.equals("narration.recipe.usage.more") && RecipeBookProjection.active()) return craftable$detailsHint();
+        return Component.translatable(key);
+    }
+
     @Redirect(method = "renderWidget", at = @At(value = "INVOKE",
             target = "Lnet/minecraft/client/gui/GuiGraphics;blitSprite(Lnet/minecraft/resources/ResourceLocation;IIII)V"))
     private void craftable$background(GuiGraphics gui, ResourceLocation sprite, int x, int y, int width, int height) {
@@ -119,6 +129,10 @@ public abstract class RecipeButtonMixin extends AbstractWidget {
     @Inject(method = "getTooltipText", at = @At("RETURN"))
     private void craftable$tooltip(CallbackInfoReturnable<List<Component>> ci) {
         if (!RecipeBookProjection.active()) return;
+        // 中文：增强模式的路线入口在详情页，提示沿用玩家当前绑定的制作键。
+        // Enhanced route choices live in details. The prompt follows the player's current craft key.
+        ci.getReturnValue().removeIf(line -> line.getContents() instanceof TranslatableContents translation
+                && translation.getKey().equals("gui.recipebook.moreRecipes"));
         var button = (RecipeButton) (Object) this;
         var lifecycle = RecipeButtonTargetResolver.lifecycle(button);
         var target = RecipeButtonTargetResolver.preferredRecipe(button);
@@ -139,6 +153,12 @@ public abstract class RecipeButtonMixin extends AbstractWidget {
         if (RecipeButtonTargetResolver.visualState(button, getOrderedRecipes()) == RecipeButtonVisualState.OTHER_VARIANT_CRAFTABLE)
             ci.getReturnValue().add(Component.translatable("tooltip.craftable.other_variant_craftable"));
         ci.getReturnValue().add(Component.translatable("tooltip.craftable.create_one",
-                org.craftablemc.craftable.client.CraftableKeyMappings.CREATE_ONE.getTranslatedKeyMessage()));
+                CraftableKeyMappings.CREATE_ONE.getTranslatedKeyMessage()));
+        ci.getReturnValue().add(craftable$detailsHint());
+    }
+
+    @Unique
+    private static MutableComponent craftable$detailsHint() {
+        return Component.translatable("tooltip.craftable.recipe_details", CraftableKeyMappings.CREATE_ONE.getTranslatedKeyMessage());
     }
 }

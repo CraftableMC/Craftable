@@ -31,12 +31,15 @@ import net.minecraft.world.item.crafting.RecipeHolder;
 import net.minecraft.world.item.crafting.Recipe;
 import net.minecraft.world.item.crafting.RecipeSerializer;
 import net.minecraft.world.item.crafting.ShapedRecipe;
+import net.minecraft.world.item.crafting.AbstractCookingRecipe;
+import net.minecraft.world.item.crafting.SingleRecipeInput;
 import net.minecraft.world.level.GameRules;
 import net.neoforged.neoforge.common.CommonHooks;
 import org.craftablemc.craftable.api.CraftingResultCode;
 import org.craftablemc.craftable.planner.CraftPlan;
 import org.craftablemc.craftable.config.DirectPreparationPolicy;
 import org.craftablemc.craftable.config.CraftableServerConfig;
+import org.craftablemc.craftable.workstation.WorkstationCapability;
 
 /** 普通原版配方边界；每个索引归所属游戏线程，执行与合成钩子只在服务端线程运行。
  * 静态索引不存玩家权限或材料结论；每个实例仅冻结本次操作的访问/确认规则，不授予提交权。
@@ -50,6 +53,7 @@ public final class CraftingRecipes {
     private static final Map<MinecraftServer, Index> INDEXES = new IdentityHashMap<>();
     private final ServerPlayer player;
     private final boolean workbench;
+    private final int furnaceMask, maxFurnaceBatches;
     private final Set<ResourceLocation> unlocked;
     private final boolean limited;
     private final Index index;
@@ -60,8 +64,15 @@ public final class CraftingRecipes {
     }
 
     public CraftingRecipes(ServerPlayer player, boolean workbench, DirectPreparationPolicy directPreparation) {
+        this(player, workbench, directPreparation, 0, 64);
+    }
+
+    public CraftingRecipes(ServerPlayer player, boolean workbench, DirectPreparationPolicy directPreparation,
+            int furnaceMask, int maxFurnaceBatches) {
         this.player = player;
         this.workbench = workbench;
+        this.furnaceMask = furnaceMask;
+        this.maxFurnaceBatches = maxFurnaceBatches;
         this.directPreparation = java.util.Objects.requireNonNull(directPreparation, "directPreparation");
         this.limited = player.serverLevel().getGameRules().getBoolean(GameRules.RULE_LIMITED_CRAFTING);
         var server = player.getServer();
@@ -159,13 +170,16 @@ public final class CraftingRecipes {
         var current = INDEXES.get(server);
         return current == generation && current != null && current.identity == server.getRecipeManager().getRecipes();
     }
-    public Object accessIdentity() { return List.of(index, workbench, limited, Set.copyOf(unlocked)); }
+    public Object accessIdentity() { return List.of(index, workbench, furnaceMask, maxFurnaceBatches, limited, Set.copyOf(unlocked)); }
     public boolean workbench() { return workbench; }
+    public int furnaceMask() { return furnaceMask; }
     public boolean limitedCrafting() { return limited; }
     public Set<ResourceLocation> unlockedRecipes() { return Set.copyOf(unlocked); }
     public Entry find(ResourceLocation id) { return index.byId.get(id); }
     public List<Entry> entries() { return index.ordered; }
-    public PlanningInput planningInput() { return new PlanningInput(index, workbench, limited, unlocked, directPreparation); }
+    public PlanningInput planningInput() {
+        return new PlanningInput(index, workbench, limited, unlocked, directPreparation, furnaceMask, maxFurnaceBatches);
+    }
     public boolean allowDirectPreparation(Entry entry) {
         return entry != null && directPreparation.allowsWithoutConfirmation(entry.id());
     }
@@ -174,12 +188,29 @@ public final class CraftingRecipes {
      * Validate the chosen route against live authoritative behavior, never
      * search an alternative here. The pure model cannot authorize execution. */
     public boolean validate(CraftPlan plan) {
+        var heat = new java.util.EnumMap<WorkstationCapability, Integer>(WorkstationCapability.class);
+        int cookingBatches = 0;
         for (var step : plan.steps()) {
             var entry = find(step.recipe().id());
-            if (unavailable(entry) != null) return false;
+            if (unavailable(entry) != null || entry.gridSize() != step.gridSize()) return false;
             var actual = assemble(entry, step.path(), step.inputs());
             if (actual == null || !ItemStack.matches(actual.output(), step.output())
                     || !CraftPlan.stackKeys(actual.remainders()).equals(CraftPlan.stackKeys(step.remainders()))) return false;
+            if (entry.furnace() != null) {
+                if (++cookingBatches > maxFurnaceBatches) return false;
+                var furnace = entry.furnace();
+                if (!furnace.requiresFuel()) continue; // assemble 已校验只有炉料。 / Assembly required a single cooking input.
+                int available = heat.getOrDefault(furnace.station(), 0);
+                var inputs = step.inputs();
+                for (int slot = 1; slot < inputs.size(); slot++) {
+                    int live = furnace.burnTicks(inputs.get(slot));
+                    var frozen = index.fuels.get(furnace.station()).values().get(inputs.get(slot).getItem());
+                    if (frozen == null || frozen.ticks() != live) return false;
+                    available += live;
+                }
+                if (available < furnace.ticks()) return false;
+                heat.put(furnace.station(), available - furnace.ticks());
+            }
         }
         return true;
     }
@@ -189,6 +220,8 @@ public final class CraftingRecipes {
      * live recipes here still require assemble/validate revalidation. */
     public CraftingResultCode unavailable(Entry entry) {
         if (entry == null) return CraftingResultCode.UNSUPPORTED_RECIPE;
+        if (entry.furnace() != null && (furnaceMask & entry.furnace().station().bit()) == 0)
+            return CraftingResultCode.MISSING_WORKSTATION;
         if (limited && !unlocked.contains(entry.id())) return CraftingResultCode.RECIPE_LOCKED;
         if (entry.gridSize() == 3 && !workbench) return CraftingResultCode.MISSING_WORKSTATION;
         return null;
@@ -243,8 +276,18 @@ public final class CraftingRecipes {
      * Preserve replay provenance in the already copied authoritative step.
      * Origins do not replace live recipe matching, assembly or remainder checks. */
     public CraftPlan.Step assemble(Entry entry, String path, List<ItemStack> grid, List<Integer> origins) {
+        if (entry.furnace() != null) {
+            if (grid.isEmpty() || grid.size() > (entry.furnace().requiresFuel() ? 9 : 1)) return null;
+            var recipe = (AbstractCookingRecipe) entry.holder().value();
+            var input = new SingleRecipeInput(grid.getFirst().copy());
+            if (!recipe.matches(input, player.serverLevel())) return null;
+            var output = recipe.assemble(input, player.registryAccess());
+            if (!ItemStack.matches(output, entry.output())) return null;
+            var remainders = grid.subList(1, grid.size()).stream().map(ItemStack::getCraftingRemainingItem).toList();
+            return new CraftPlan.Step(entry.holder(), path, 1, grid, output, remainders, origins);
+        }
         CraftingInput input = CraftingInput.of(entry.gridSize(), entry.gridSize(), CraftPlan.copies(grid));
-        var recipe = entry.holder().value();
+        var recipe = (CraftingRecipe) entry.holder().value();
         if (!recipe.matches(input, player.serverLevel())) return null;
         ItemStack output = recipe.assemble(input, player.registryAccess()).copy();
         // 静态产物只是索引提示，不能凭空发明动态产物；含组件漂移的不支持行为必须拒绝。
@@ -268,8 +311,8 @@ public final class CraftingRecipes {
 
     public record Requirement(int slot, Ingredient ingredient) {}
 
-    public record Entry(RecipeHolder<CraftingRecipe> holder, int gridSize,
-            List<Requirement> requirements, ItemStack output) {
+    public record Entry(RecipeHolder<?> holder, int gridSize,
+            List<Requirement> requirements, ItemStack output, FurnaceRecipe furnace) {
         public Entry {
             requirements = List.copyOf(requirements);
             output = output.copy();
@@ -297,6 +340,7 @@ public final class CraftingRecipes {
         final Map<Item, ItemStack> remainders = new HashMap<>();
         final Set<Item> returnedItems = new java.util.HashSet<>();
         final Set<ResourceLocation> returningRecipes = new java.util.HashSet<>();
+        final Map<WorkstationCapability, FurnaceRecipe.FuelTable> fuels = new java.util.EnumMap<>(WorkstationCapability.class);
         int optionReferences, producerReferences;
         long lookups, hits, builds;
         long estimatedBytes;
@@ -322,9 +366,13 @@ public final class CraftingRecipes {
 
         private Index(Object identity) { this.identity = identity; }
 
-        @SuppressWarnings("unchecked")
         private void add(RecipeHolder<?> holder, HolderLookup.Provider registries) {
-            if (!holder.id().getNamespace().equals("minecraft") || !(holder.value() instanceof CraftingRecipe recipe)
+            if (!holder.id().getNamespace().equals("minecraft")) return;
+            if (holder.value() instanceof AbstractCookingRecipe cooking) {
+                addCooking(holder, cooking, registries);
+                return;
+            }
+            if (!(holder.value() instanceof CraftingRecipe recipe)
                     || (recipe.getSerializer() != RecipeSerializer.SHAPED_RECIPE
                     && recipe.getSerializer() != RecipeSerializer.SHAPELESS_RECIPE)
                     || recipe.isSpecial() || recipe.isIncomplete() || recipe.getIngredients().isEmpty()) return;
@@ -364,11 +412,35 @@ public final class CraftingRecipes {
                 requirements.add(new Requirement(slot, ingredient));
             }
             if (requirements.isEmpty()) return;
-            var entry = new Entry((RecipeHolder<CraftingRecipe>) (RecipeHolder<?>) holder,
-                    size, requirements, output);
+            var entry = new Entry(holder, size, requirements, output, null);
             byId.put(holder.id(), entry);
             if (returnsContainer) returningRecipes.add(holder.id());
             if (valueRecipe) valueRecipes.add(holder.id());
+            byOutput.computeIfAbsent(output.getItem(), ignored -> new ArrayList<>()).add(entry);
+        }
+
+        private void addCooking(RecipeHolder<?> holder, AbstractCookingRecipe recipe, HolderLookup.Provider registries) {
+            var furnace = FurnaceRecipe.of(recipe);
+            if (furnace == null || recipe.isIncomplete() || recipe.getIngredients().size() != 1) return;
+            var ingredient = recipe.getIngredients().getFirst();
+            if (key(ingredient) == null) return;
+            var options = ingredient.getItems();
+            // 湿海绵的原版取水行为依赖燃料槽状态，暂不将它当成普通单输入炉配方。
+            // Wet sponge can fill a bucket in the real fuel slot; it is outside this single-input model.
+            if (java.util.Arrays.stream(options).anyMatch(stack -> stack.is(net.minecraft.world.item.Items.WET_SPONGE)
+                    || !BuiltInRegistries.ITEM.getKey(stack.getItem()).getNamespace().equals("minecraft"))) return;
+            var output = recipe.getResultItem(registries);
+            if (output.isEmpty()) return;
+            if (furnace.requiresFuel()) {
+                var fuel = fuels.computeIfAbsent(furnace.station(), ignored -> furnace.fuels());
+                if (fuel.values().isEmpty()) return;
+                for (var value : fuel.values().values())
+                    if (!value.remainder().isEmpty()) returnedItems.add(value.remainder().getItem());
+            }
+            var entry = new Entry(holder, 1,
+                    List.of(new Requirement(0, Ingredient.of(java.util.Arrays.stream(options).map(ItemStack::copy)))), output, furnace);
+            byId.put(holder.id(), entry);
+            valueRecipes.add(holder.id());
             byOutput.computeIfAbsent(output.getItem(), ignored -> new ArrayList<>()).add(entry);
         }
 
@@ -379,6 +451,7 @@ public final class CraftingRecipes {
         static final class Builder {
             private final java.security.MessageDigest modelDigest = RecipeKnowledgeCache.digest();
             private final Map<Object, com.google.gson.JsonObject> componentValues = new HashMap<>();
+            private final Set<WorkstationCapability> fingerprintedFuels = java.util.EnumSet.noneOf(WorkstationCapability.class);
             private final Index index;
             private final HolderLookup.Provider registries;
             private final java.util.Iterator<RecipeHolder<?>> recipes;
@@ -469,6 +542,20 @@ public final class CraftingRecipes {
             private void fingerprintEntry(Entry entry) {
                 RecipeKnowledgeCache.field(modelDigest, entry.id().toString());
                 RecipeKnowledgeCache.field(modelDigest, entry.gridSize() + ":" + index.valueRecipes.contains(entry.id()));
+                if (entry.furnace() != null) {
+                    var furnace = entry.furnace();
+                    RecipeKnowledgeCache.field(modelDigest, furnace.station().name());
+                    RecipeKnowledgeCache.field(modelDigest, furnace.ticks() + ":" + furnace.experience());
+                    if (furnace.requiresFuel() && fingerprintedFuels.add(furnace.station())) {
+                        index.fuels.get(furnace.station()).values().entrySet().stream()
+                                .sorted(Comparator.comparing(fuel -> BuiltInRegistries.ITEM.getKey(fuel.getKey()).toString()))
+                                .forEach(fuel -> {
+                                    RecipeKnowledgeCache.field(modelDigest, BuiltInRegistries.ITEM.getKey(fuel.getKey()).toString());
+                                    RecipeKnowledgeCache.field(modelDigest, Integer.toString(fuel.getValue().ticks()));
+                                    fingerprintStack(fuel.getValue().remainder());
+                                });
+                    }
+                }
                 fingerprintStack(entry.output());
                 for (var demand : entry.requirements()) {
                     RecipeKnowledgeCache.field(modelDigest, "slot:" + demand.slot());

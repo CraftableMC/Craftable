@@ -51,7 +51,8 @@ final class CraftWitnessValidator {
                 require(request.selections().get(claimed.path()).equals(claimed.recipe()));
             }
             var grid = claimed.inputs();
-            require(grid.size() == entry.gridSize() * entry.gridSize());
+            // 炉类热量与燃料由服务端规划。 / Furnace heat and fuel are planned on the server.
+            require(entry.furnace() == null && grid.size() == entry.gridSize() * entry.gridSize());
             boolean[] occupied = new boolean[grid.size()];
             for (var requirement : entry.requirements()) {
                 occupied[requirement.slot()] = true;

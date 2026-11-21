@@ -213,7 +213,7 @@ public final class CraftingService {
             // 在事务变更前拒绝超额，不在扣料中途按时间取消；admission 仍计入完整事务时长。
             // Reject excess work before mutation, never time-cancel midway; admission still charges the whole transaction.
             if (exhausted(allowance, remainingNanos)) return Outcome.failed(CraftingResultCode.SEARCH_BUDGET_EXCEEDED);
-            var code = CraftingTransaction.execute(player, plan, snapshot, prepared.delivery);
+            var code = CraftingTransaction.execute(player, plan, snapshot, prepared.delivery, prepared.rules.timeCompression());
             return new Outcome(code, plan, plan.missing(),
                     code == CraftingResultCode.CREATED || code == CraftingResultCode.PARTIAL_CREATED
                             ? prepared.delivery.drops() : List.of());
@@ -261,7 +261,8 @@ public final class CraftingService {
         var rules = CraftableServerConfig.craftingRules();
         var effective = restrictRequest(requested, rules);
         if (effective.batches() > rules.maxBatches()) throw new IllegalArgumentException("Batch limit");
-        var recipes = new CraftingRecipes(player, workbench(player, world), rules.directPreparation().restrict(effective.policy()));
+        var recipes = new CraftingRecipes(player, workbench(player, world), rules.directPreparation().restrict(effective.policy()),
+                world.furnaceMask(), rules.maxFurnaceBatches());
         witnessValidations++;
         CraftPlan plan;
         try { plan = CraftWitnessValidator.validate(recipes, effective, witness, browsing.sources(), budget, rules.maxPlanSteps()); }
@@ -322,7 +323,8 @@ public final class CraftingService {
             SearchBudget budget) {
         var rules = CraftableServerConfig.craftingRules();
         CraftRequest effective = restrictRequest(requested, rules);
-        var recipes = new CraftingRecipes(player, workbench(player, snapshot), rules.directPreparation().restrict(effective.policy()));
+        var recipes = new CraftingRecipes(player, workbench(player, snapshot), rules.directPreparation().restrict(effective.policy()),
+                snapshot.furnaceMask(), rules.maxFurnaceBatches());
         if (effective.batches() > rules.maxBatches()) {
             return new Prepared(SearchResult.blocked(CraftingResultCode.SEARCH_BUDGET_EXCEEDED), effective,
                     recipes, rules, MainInventoryInsertion.Delivery.failed(CraftingResultCode.SEARCH_BUDGET_EXCEEDED));
@@ -353,7 +355,8 @@ public final class CraftingService {
         var previous = CraftingSessions.failure(player, identity);
         var scope = previous == null ? new CraftSearch.Reachability() : previous.scope();
         var search = new CraftSearch(recipes, diagnostic, sources, budget, rules.maxPlanSteps(),
-                plan -> MainInventoryInsertion.simulate(mainSlots, inventoryMaximum, plan, playerEndpoints, endpointIds, effective.allowDrops()).failure())
+                plan -> !rules.timeCompression() && plan.hasCooking() ? null
+                        : MainInventoryInsertion.simulate(mainSlots, inventoryMaximum, plan, playerEndpoints, endpointIds, effective.allowDrops()).failure())
                 .withReachability(scope).withFullEvidence(previous == null ? null : previous.evidence());
         SearchResult result = search.run();
         activeFullSearches += search.fullSearches(); activePartialSearches += search.partialSearches();
@@ -365,8 +368,9 @@ public final class CraftingService {
             if (code != null) return new Prepared(SearchResult.blocked(code), effective, recipes, rules,
                     MainInventoryInsertion.Delivery.failed(code), search.fullEvidence() != null);
         }
-        var delivery = result.plan().map(plan ->
-                MainInventoryInsertion.simulate(player.getInventory(), plan, snapshot, effective.allowDrops()))
+        var delivery = result.plan().map(plan -> !rules.timeCompression() && plan.hasCooking()
+                ? new MainInventoryInsertion.Delivery(null, List.of(), List.of())
+                : MainInventoryInsertion.simulate(player.getInventory(), plan, snapshot, effective.allowDrops()))
                 .orElseGet(() -> MainInventoryInsertion.Delivery.failed(result.code()));
         return new Prepared(result, effective, recipes, rules, delivery, search.fullEvidence() != null);
     }

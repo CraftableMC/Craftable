@@ -45,6 +45,13 @@ public record EnvironmentSnapshot(
         return workstations.stream().anyMatch(endpoint -> endpoint.capability() == capability);
     }
 
+    /** 当前已授权工作站的炉类能力，不含合成格位，也不代表燃料或执行权限。 / Authorized cooking capabilities only, not crafting grids, fuel or execution authority. */
+    public int furnaceMask() {
+        int mask = 0;
+        for (var endpoint : workstations) mask |= endpoint.capability().bit();
+        return mask & WorkstationCapability.COOKING_MASK;
+    }
+
     private static void requireUniqueIds(List<String> ids, String label) {
         HashSet<String> unique = new HashSet<>();
         for (String id : ids) {

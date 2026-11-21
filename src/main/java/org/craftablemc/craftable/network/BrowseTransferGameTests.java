@@ -44,6 +44,31 @@ public final class BrowseTransferGameTests {
         helper.succeed();
     }
 
+    @GameTest(templateNamespace = "minecraft", template = "bastion/mobs/empty")
+    public static void furnaceCapabilitiesAndRulesSurviveSnapshotCodec(GameTestHelper helper) {
+        int furnaceMask = org.craftablemc.craftable.workstation.WorkstationCapability.FURNACE.bit()
+                | org.craftablemc.craftable.workstation.WorkstationCapability.SMOKER.bit()
+                | org.craftablemc.craftable.workstation.WorkstationCapability.CAMPFIRE.bit();
+        var snapshot = new BrowsingSnapshot(UUID.randomUUID(), 1, 2, true, false, Set.of(), false,
+                64, 128, DirectPreparationPolicy.DEFAULT, 64,
+                Collections.nCopies(36, ItemStack.EMPTY), List.of(), furnaceMask, false, 17);
+        var decoded = CraftingWire.snapshot(CraftingWire.snapshot(snapshot, helper.getLevel().registryAccess()),
+                helper.getLevel().registryAccess());
+        helper.assertTrue(snapshot.contentIdentity().equals(decoded.contentIdentity()),
+                "snapshot codec lost furnace capabilities or rules");
+        for (var changed : List.of(
+                new BrowsingSnapshot(snapshot.session(), 1, 2, true, false, Set.of(), false, 64, 128,
+                        DirectPreparationPolicy.DEFAULT, 64, snapshot.inventory(), List.of(),
+                        furnaceMask & ~org.craftablemc.craftable.workstation.WorkstationCapability.CAMPFIRE.bit(), false, 17),
+                new BrowsingSnapshot(snapshot.session(), 1, 2, true, false, Set.of(), false, 64, 128,
+                        DirectPreparationPolicy.DEFAULT, 64, snapshot.inventory(), List.of(), furnaceMask, true, 17),
+                new BrowsingSnapshot(snapshot.session(), 1, 2, true, false, Set.of(), false, 64, 128,
+                        DirectPreparationPolicy.DEFAULT, 64, snapshot.inventory(), List.of(), furnaceMask, false, 18)))
+            helper.assertTrue(!snapshot.contentIdentity().equals(changed.contentIdentity()),
+                    "furnace capability/rule change retained a stale resource identity");
+        helper.succeed();
+    }
+
     private static CraftingDetailPayloads.BrowseRequest request(UUID session, long resources) {
         return new CraftingDetailPayloads.BrowseRequest(1, 9, true, session, resources);
     }

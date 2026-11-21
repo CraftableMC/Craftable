@@ -119,7 +119,7 @@ public final class RecipeBookInputHandler {
         if (detail) {
             clearRequestState();
             org.craftablemc.craftable.client.CraftingPlanOverlay.open(event.getScreen(), recipe.id(), false,
-                    RecipeButtonTargetResolver.outputVariants(hoveredButton));
+                    RecipeButtonTargetResolver.outputVariants(hoveredButton.getCollection(), recipe));
             event.setCanceled(true);
             return;
         }

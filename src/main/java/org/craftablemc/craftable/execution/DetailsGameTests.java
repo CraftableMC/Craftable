@@ -292,6 +292,108 @@ public final class DetailsGameTests {
         helper.succeed();
     }
 
+    @GameTest(templateNamespace = "minecraft", template = EMPTY)
+    public static void unknownColorSketchStopsRecoloringWithoutChangingMissingEvidence(GameTestHelper helper) {
+        var player = PlanningTestSupport.player(helper);
+        try {
+            var catalog = new CraftingRecipes(player, true);
+            var request = request("red_carpet").withBatches(3);
+            var missing = List.of(new org.craftablemc.craftable.planner.CraftPlan.Missing("0.0",
+                    List.of(new ItemStack(Items.RED_WOOL)), 6));
+            var unknown = new org.craftablemc.craftable.planner.SearchResult(
+                    org.craftablemc.craftable.api.CraftingResultCode.SEARCH_BUDGET_EXCEEDED,
+                    java.util.Optional.empty(), missing, false, 1);
+            var view = PlanView.from(catalog, request, unknown, List.of(), List.of());
+            // 无料草图可留下羊毛缺项或沿线做白羊毛的短路，不能把换色环画成不断增加的材料需求。
+            // With no stock, keep a wool leaf or the short string-to-white-wool route, never an expanding recoloring loop.
+            var dye = ResourceLocation.withDefaultNamespace("dye_red_wool");
+            helper.assertTrue(view.nodes().stream().anyMatch(n -> n.recipes().contains(dye)),
+                    "target wool coloring disappeared from the sketch");
+            helper.assertTrue(view.nodes().stream().flatMap(n -> n.recipes().stream())
+                    .filter(id -> id.getPath().startsWith("dye_") && id.getPath().endsWith("_wool"))
+                    .allMatch(dye::equals), "default sketch recursively recolored missing wool");
+            var displayedColor = view.nodes().stream().filter(n -> n.recipes().contains(dye)).findFirst().orElseThrow();
+            var colored = displayedColor.reference().isEmpty() ? displayedColor : view.nodes().stream()
+                    .filter(n -> n.path().equals(displayedColor.reference())).findFirst().orElse(null);
+            helper.assertTrue(colored != null && colored.recipes().contains(dye),
+                    "shared color demand did not reference its producing node");
+            var woolRequirement = catalog.find(dye).requirements().stream()
+                    .filter(r -> r.ingredient().test(new ItemStack(Items.WHITE_WOOL))).findFirst().orElse(null);
+            helper.assertTrue(woolRequirement != null, "vanilla coloring fixture has no wool input");
+            int woolSlot = woolRequirement.slot();
+            var wool = view.nodes().stream().filter(n -> n.path().equals(colored.path() + "." + woolSlot))
+                    .findFirst().orElse(null);
+            helper.assertTrue(wool != null, "color producer lost its actual wool demand node");
+            helper.assertTrue(!wool.needs().isEmpty() && wool.needs().stream().allMatch(s -> s.getCount() == 6),
+                    "wool alternatives or the selected output lost their six-item demand");
+            helper.assertValueEqual(view.missing(), missing, "sketch rewrote the search's missing evidence");
+            helper.assertValueEqual(view.code(), unknown.code(), "unknown sketch invented a definite result");
+            helper.assertTrue(view.operations().isEmpty() && view.consumed().isEmpty() && view.primary().isEmpty(),
+                    "unknown sketch fabricated execution or delivery");
+        } finally { PlanningTestSupport.remove(player); }
+        helper.succeed();
+    }
+
+    @GameTest(templateNamespace = "minecraft", template = EMPTY)
+    public static void defaultSketchPrefersStockBackedBatchesOverAlphabeticalWood(GameTestHelper helper) {
+        var player = PlanningTestSupport.player(helper);
+        try {
+            var catalog = new CraftingRecipes(player, true);
+            var blocked = org.craftablemc.craftable.planner.SearchResult.blocked(
+                    org.craftablemc.craftable.api.CraftingResultCode.MISSING_INGREDIENTS);
+            var view = PlanView.from(catalog, request("stick").withBatches(3), blocked,
+                    List.of(), List.of(new ItemStack(Items.BIRCH_LOG, 2)));
+            helper.assertTrue(view.nodes().stream().anyMatch(n -> n.recipes()
+                    .contains(ResourceLocation.withDefaultNamespace("birch_planks"))),
+                    "sketch ignored available birch logs for an alphabetical wood route");
+            helper.assertTrue(view.nodes().stream().noneMatch(n -> n.recipes()
+                    .contains(ResourceLocation.withDefaultNamespace("acacia_planks"))),
+                    "sketch selected unavailable alphabetical planks");
+            helper.assertValueEqual(view.nodes().stream().flatMap(n -> n.needs().stream())
+                    .filter(s -> s.is(Items.BIRCH_LOG)).mapToInt(ItemStack::getCount).sum(), 2,
+                    "six planks did not share exactly two four-plank batches");
+            helper.assertValueEqual(view.nodes().stream().filter(n -> n.path().equals("0"))
+                    .flatMap(n -> n.needs().stream()).mapToInt(ItemStack::getCount).sum(), 12,
+                    "three stick batches were mislabeled as three items");
+            helper.assertTrue(view.operations().isEmpty() && view.consumed().isEmpty(),
+                    "stock-backed sketch became an actual plan");
+        } finally { PlanningTestSupport.remove(player); }
+        helper.succeed();
+    }
+
+    @GameTest(templateNamespace = "minecraft", template = EMPTY)
+    public static void metalScrapSketchNeedsExistingGearButPreservesExplicitChoice(GameTestHelper helper) {
+        var player = PlanningTestSupport.player(helper);
+        try {
+            var catalog = new CraftingRecipes(player, true, org.craftablemc.craftable.config.DirectPreparationPolicy.DEFAULT,
+                    org.craftablemc.craftable.workstation.WorkstationCapability.FURNACE.bit(), 64);
+            var blocked = org.craftablemc.craftable.planner.SearchResult.blocked(
+                    org.craftablemc.craftable.api.CraftingResultCode.MISSING_INGREDIENTS);
+            var request = request("iron_ingot_from_nuggets");
+            var recycle = ResourceLocation.withDefaultNamespace("iron_nugget_from_smelting");
+            var empty = PlanView.from(catalog, request, blocked, List.of(), List.of());
+            helper.assertTrue(empty.nodes().stream().noneMatch(n -> n.recipes().contains(recycle)),
+                    "missing nuggets expanded into equipment manufactured for recycling");
+            helper.assertValueEqual(empty.nodes().stream().flatMap(n -> n.needs().stream())
+                    .filter(s -> s.is(Items.IRON_NUGGET)).mapToInt(ItemStack::getCount).sum(), 9,
+                    "unexpanded nugget demand was multiplied by a fabricated equipment route");
+            var stocked = PlanView.from(catalog, request, blocked, List.of(), List.of(new ItemStack(Items.IRON_BOOTS)));
+            helper.assertTrue(stocked.nodes().stream().anyMatch(n -> n.recipes().contains(recycle)),
+                    "existing recyclable equipment disappeared from the sketch");
+            helper.assertTrue(stocked.nodes().stream().filter(n -> !n.path().equals("0"))
+                            .flatMap(n -> n.needs().stream()).noneMatch(s -> s.is(Items.IRON_INGOT)),
+                    "reusing the first scrap route manufactured more equipment");
+            var pinned = new CraftRequest(request.recipe(), 1, false, false,
+                    CraftRequest.PartialPolicy.EXPLICIT_SAFE, java.util.Map.of("0.0", recycle));
+            var explicit = PlanView.from(catalog, pinned, blocked, List.of(), List.of());
+            helper.assertTrue(explicit.nodes().stream().anyMatch(n -> n.path().equals("0.0") && n.recipes().contains(recycle)),
+                    "default recycling guard suppressed an explicit recipe choice");
+            helper.assertTrue(explicit.operations().isEmpty() && explicit.consumed().isEmpty(),
+                    "explicit sketch fabricated a real recycling operation");
+        } finally { PlanningTestSupport.remove(player); }
+        helper.succeed();
+    }
+
     private static org.craftablemc.craftable.recipe.CraftingRecipes.Entry producer(CraftingRecipes catalog,
             net.minecraft.world.item.Item output, net.minecraft.world.item.Item input) {
         return catalog.producing(net.minecraft.world.item.crafting.Ingredient.of(output)).stream()

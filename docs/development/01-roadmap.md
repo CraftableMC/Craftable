@@ -99,7 +99,9 @@ A–G、虚影修正及 H 玩家反馈通过；连续切换分类后约 2 秒状
 
 设置和后续设计见 [Pre-M5 实施说明](16-pre-m5-transition.md)。三轮人工游玩、自动回归和未覆盖范围见 [Pre-M5 验收](18-pre-m5-acceptance.md)，独立缺陷及修复见[代码质量审计](17-production-behavior-audit.md)。
 
-### M5 炉类处理（未开始）
+### M5 炉类处理与静态配方预热（实施中）
+
+分步落地及验收边界见 [M5 实施计划](19-m5-implementation-plan.md)。
 
 - 熔炉、高炉、烟熏炉配方；
 - 按燃烧 tick 计算燃料与浪费；

@@ -181,7 +181,7 @@ final class DirectPreparationSettingsScreen extends OptionsSubScreen {
             Component item = entry != null ? entry.output().getHoverName()
                     : text("unsupported");
             Component full = Component.empty().append(item).append("\n").append(id.toString()).append("\n")
-                    .append(entry != null ? text("method", entry.gridSize(), entry.gridSize())
+                    .append(entry != null ? recipeMethod(entry)
                             : text("unsupported.tooltip"));
             if (entry != null) full = full.copy().append("\n").append(text("result", entry.output().getCount()))
                     .append("\n").append(text("inputs", inputSummary(entry)));
@@ -213,6 +213,11 @@ final class DirectPreparationSettingsScreen extends OptionsSubScreen {
     private String itemSortKey(ResourceLocation id) {
         var entry = recipes.get(id);
         return entry == null ? "~" + id : BuiltInRegistries.ITEM.getKey(entry.output().getItem()).toString();
+    }
+
+    private static Component recipeMethod(CraftingRecipes.Entry entry) {
+        return entry.furnace() == null ? text("method", entry.gridSize(), entry.gridSize())
+                : text("method." + entry.furnace().station().name().toLowerCase(Locale.ROOT));
     }
 
     static String inputSummary(CraftingRecipes.Entry entry) {

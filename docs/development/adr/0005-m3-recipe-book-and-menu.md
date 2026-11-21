@@ -3,6 +3,7 @@
 - 日期：2026-09-06
 - 状态：已接受，已实现。
 - 后续演进：配方书状态由批次查询改为授权快照下的客户端规划。现行浏览与执行边界见 [ADR-0008](0008-snapshot-scoped-client-planning.md)。
+- M5 的左键详情入口和路线选择见 [ADR-0009](0009-recipe-route-selection-in-plan-details.md)。
 
 ## 决策与取证
 

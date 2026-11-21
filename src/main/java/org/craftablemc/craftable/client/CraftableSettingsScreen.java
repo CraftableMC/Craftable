@@ -241,7 +241,8 @@ public final class CraftableSettingsScreen extends OptionsSubScreen {
                 "verticalRadius", rules.scan.verticalRadius(), "includeEnderChest", rules.scan.includeEnderChest(),
                 "surplusDelivery", rules.crafting.surplusDelivery(),
                 "maxCraftBatch", rules.crafting.maxBatches(), "maxPlanSteps", rules.crafting.maxPlanSteps(),
-                "directPreparationMode", rules.crafting.directPreparation().mode());
+                "directPreparationMode", rules.crafting.directPreparation().mode(),
+                "timeCompression", rules.crafting.timeCompression(), "maxFurnaceBatches", rules.crafting.maxFurnaceBatches());
         return NativeConfigOption.definitions(CraftableServerConfig.SPEC).stream().filter(NativeConfigOption::scalar).<Component>map(value -> {
             Object current = values.get(value.getPath().getLast());
             return CommonComponents.optionNameValue(Component.translatable(value.getSpec().getTranslationKey()),

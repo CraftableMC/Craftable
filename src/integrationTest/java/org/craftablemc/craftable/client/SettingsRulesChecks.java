@@ -98,7 +98,7 @@ final class SettingsRulesChecks {
         var list = (OptionsList) read(mc.screen, UiField.LIST);
         require(((ContainerEventHandler) list).children().size() == (expected.size() + 2) / 2
                     && rowWidgets(list).size() == expected.size() + 1,
-                "Read-only rules retained a status/retry/retired partialExecution row among the seven world options and whitelist entry");
+                "Read-only rules retained a status/retry/retired partialExecution row among the registered world options and whitelist entry");
         var retry = (Button) read(mc.screen, UiField.RETRY);
         var done = button(mc.screen, CommonComponents.GUI_DONE.getString());
         require(retry != null && retry.active && retry.getTooltip() != null

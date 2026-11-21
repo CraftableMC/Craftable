@@ -116,7 +116,7 @@ final class LeaseReadinessScenario {
 
     private static CraftingDetailPayloads.BrowseLease sameValueLease(CraftingDetailPayloads.BrowseLease value, long expires) {
         return new CraftingDetailPayloads.BrowseLease(value.menuId(), value.revision(), value.session(), value.recipes(), value.resources(),
-                expires, value.fingerprint(), null, value.settings(), value.workbench(), value.rules());
+                expires, value.fingerprint(), null, value.settings(), value.workbench(), value.rules(), value.furnaceMask());
     }
     private static Object inventoryIdentity(Minecraft mc) {
         return CraftPlan.stackKeys(mc.player.getInventory().items.stream().map(net.minecraft.world.item.ItemStack::copy).toList());
