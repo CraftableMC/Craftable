@@ -1,6 +1,6 @@
 # Craftable（配方书）
 
-> 用现有材料，直接合成你想要的东西。
+> 强化配方书! 用现有材料，直接合成你想要的东西。
 
 [English](README.md) · [用户指南](docs/user-guide.zh-CN.md) · [文档导航](docs/README.md)
 

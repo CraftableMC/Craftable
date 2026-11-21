@@ -1,6 +1,6 @@
 # Craftable
 
-> Craft what you can, from what you have.
+> An enhanced recipe book that shows what you can make with the materials around you.
 
 [简体中文](README.zh-CN.md) · [User guide](docs/user-guide.en.md) · [Documentation](docs/README.md)
 
