@@ -7,6 +7,7 @@
     "OptionsListEntryAccessor",
     "RecipeBookComponentAccessor",
     "RecipeBookPageAccessor",
+    "RecipeBookPageMixin",
     "RecipeButtonMixin",
     "RecipeBookComponentMixin",
     "RecipeCollectionMixin"

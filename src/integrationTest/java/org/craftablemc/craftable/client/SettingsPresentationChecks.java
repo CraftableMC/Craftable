@@ -158,8 +158,10 @@ final class SettingsPresentationChecks {
         var list = (OptionsList) read(mc.screen, UiField.LIST);
         var entry = (Button) read(mc.screen, UiField.DIRECT_PREPARATION_ENTRY);
         var draft = (ConfigSettings.Draft) read(mc.screen, UiField.DRAFT);
+        var lastScalar = NativeConfigOption.definitions(CraftableServerConfig.SPEC).stream()
+                .filter(NativeConfigOption::scalar).toList().getLast();
         var left = draft == null ? (AbstractWidget) ((List<?>) read(mc.screen, UiField.RULE_ROWS)).getLast()
-                : list.findOption(binding(mc.screen, "maxPlanSteps").option());
+                : list.findOption(binding(mc.screen, lastScalar.getPath().getLast()).option());
         var rows = ((ContainerEventHandler) list).children();
         var trailing = widgets(rows.getLast());
         require(left != null && trailing.size() == 2 && trailing.getFirst() == left && trailing.getLast() == entry
@@ -222,7 +224,8 @@ final class SettingsPresentationChecks {
         verifyEditableFooter(mc);
         if (world) {
             require(read(mc.screen, UiField.PAGE).toString().equals("WORLD") && read(mc.screen, UiField.RETRY) == null
-                    && ((ContainerEventHandler) list).children().size() == 4 && rowWidgets(list).size() == 8,
+                    && ((ContainerEventHandler) list).children().size() == (expected.size() + 2) / 2
+                    && rowWidgets(list).size() == expected.size() + 1,
                     "Editable native world rules retained a redundant status label or reload control");
             require(button(mc.screen, CommonComponents.GUI_DONE.getString()).getWidth() == 100
                     && button(mc.screen, CommonComponents.GUI_CANCEL.getString()).getWidth() == 100

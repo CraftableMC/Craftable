@@ -26,6 +26,7 @@ import net.minecraft.world.level.block.entity.ShulkerBoxBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.ChestType;
 import org.craftablemc.craftable.config.EnvironmentScanSettings;
+import org.craftablemc.craftable.workstation.FurnaceWorkstation;
 import org.craftablemc.craftable.workstation.WorkstationCapability;
 import org.craftablemc.craftable.workstation.WorkstationEndpoint;
 
@@ -113,6 +114,16 @@ final class EnvironmentScanner {
                 continue;
             }
 
+            // 篝火的食物位由原版加工独占，只登记可用的工作站能力。
+            // Vanilla cooking owns the campfire's food slots, so expose only the available workstation capability.
+            var campfire = WorkstationCapability.CAMPFIRE;
+            if (FurnaceWorkstation.matchesBlock(state, campfire)) {
+                if (player.canInteractWithBlock(pos, 4) && FurnaceWorkstation.ticking(level, pos)
+                        && FurnaceWorkstation.idle(level, pos))
+                    workstations.add(new WorkstationEndpoint(workstationEndpointId(level, pos, campfire), campfire, pos));
+                continue;
+            }
+
             BlockEntity blockEntity = level.getBlockEntity(pos);
             if (!(blockEntity instanceof Container container)
                     || hasUnresolvedLoot(blockEntity)
@@ -120,6 +131,13 @@ final class EnvironmentScanner {
                     || !hasPhysicalAccess(level, pos, state, blockEntity)
                     || !container.stillValid(player)) {
                 continue;
+            }
+
+            // 与容器共用锁和实际可用性检查，但只有空闲且真正 ticking 的原版炉提供处理能力。
+            // Reuse lock/usability checks; only idle, actually ticking vanilla furnaces provide processing capability.
+            var cooking = FurnaceWorkstation.capability(level, pos);
+            if (cooking != null && FurnaceWorkstation.ticking(level, pos) && FurnaceWorkstation.idle(level, pos)) {
+                workstations.add(new WorkstationEndpoint(workstationEndpointId(level, pos, cooking), cooking, pos));
             }
 
             endpoints.add(new ContainerEndpoint(

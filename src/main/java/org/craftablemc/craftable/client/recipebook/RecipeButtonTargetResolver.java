@@ -19,7 +19,10 @@ public final class RecipeButtonTargetResolver {
     private RecipeButtonTargetResolver() {}
 
     static List<RecipeHolder<?>> candidates(RecipeButton button) {
-        RecipeCollection collection = button.getCollection();
+        return candidates(button.getCollection());
+    }
+
+    private static List<RecipeHolder<?>> candidates(RecipeCollection collection) {
         List<RecipeHolder<?>> candidates = new ArrayList<>();
         candidates.addAll(collection.getDisplayRecipes(true));
         candidates.addAll(collection.getDisplayRecipes(false));
@@ -102,13 +105,12 @@ public final class RecipeButtonTargetResolver {
 
     /** 中文：仅提供有界 UI 上下文，绝非使用其他输出配方的授权。
      * English: Bounded UI context only; never a grant to use another output recipe. */
-    public static List<net.minecraft.resources.ResourceLocation> outputVariants(RecipeButton button) {
+    public static List<net.minecraft.resources.ResourceLocation> outputVariants(RecipeCollection collection, RecipeHolder<?> selected) {
         // 中文：保留隐藏/不可用变体供根选择器说明；额外一项仅表示既有 16 张卡片上限的截断。
         // Include hidden/unavailable variants so the root chooser can explain
         // them. The extra entry signals truncation at the existing 16-card cap.
-        var shown = button.getRecipe();
-        return java.util.stream.Stream.concat(shown == null ? java.util.stream.Stream.empty()
-                : java.util.stream.Stream.of(shown.id()), candidates(button).stream().map(RecipeHolder::id))
+        return java.util.stream.Stream.concat(java.util.stream.Stream.of(selected.id()),
+                candidates(collection).stream().map(RecipeHolder::id))
                 .distinct().limit(17).toList();
     }
 

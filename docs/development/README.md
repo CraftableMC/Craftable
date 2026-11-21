@@ -72,6 +72,7 @@ ADR 解释决策背景、备选方案与安全边界。是否被替代，应看�
 | [ADR-0006](adr/0006-m4-bounded-planning-and-chain-transaction.md) | 有界规划和整链守恒事务。 |
 | [ADR-0007](adr/0007-shared-recipe-knowledge.md) | 共享静态配方知识与有界持久化。 |
 | [ADR-0008](adr/0008-snapshot-scoped-client-planning.md) | 授权快照作用域与同核客户端规划。 |
+| [ADR-0009](adr/0009-recipe-route-selection-in-plan-details.md) | 在配方链详情中选择路线并按工作站预览配方。 |
 
 ## 测试与维护入口
 

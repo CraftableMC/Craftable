@@ -6,6 +6,7 @@ import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import org.craftablemc.craftable.Craftable;
 import org.craftablemc.craftable.client.recipebook.ClientRecipeStatusStore;
+import org.craftablemc.craftable.client.recipebook.RecipeBookProjection;
 import org.craftablemc.craftable.client.recipebook.RecipeBookStatusHandler;
 
 /** 中文：客户端事件总线上的会话失效入口，防止上一服务器的缓存、授权或菜单请求流入下一会话。
@@ -22,6 +23,13 @@ public final class ClientSessionEvents {
         // In an integrated game the same event bus also sees server loading.
         // Only the received client binding invalidates this client's graph.
         if (event.getUpdateCause() == net.neoforged.neoforge.event.TagsUpdatedEvent.UpdateCause.CLIENT_PACKET_RECEIVED)
+            org.craftablemc.craftable.client.recipebook.ClientBrowsePlanner.recipesChanged();
+    }
+
+    @SubscribeEvent
+    public static void onFuelDataUpdated(net.neoforged.neoforge.registries.datamaps.DataMapsUpdatedEvent event) {
+        if (event.getCause() == net.neoforged.neoforge.registries.datamaps.DataMapsUpdatedEvent.UpdateCause.CLIENT_SYNC
+                && event.getRegistryKey().equals(net.minecraft.core.registries.Registries.ITEM))
             org.craftablemc.craftable.client.recipebook.ClientBrowsePlanner.recipesChanged();
     }
 
@@ -46,7 +54,9 @@ public final class ClientSessionEvents {
         // 中文：各所有者清理自己的状态；这里仅编排生命周期，不建立第二份会话缓存。
         // English: Each owner clears its own state; this method coordinates lifecycle without a second session cache.
         org.craftablemc.craftable.client.recipebook.ClientBrowsePlanner.disconnect();
+        FurnaceProgressOverlay.clear();
         ClientRecipeStatusStore.clear();
+        RecipeBookProjection.clearCatalog();
         org.craftablemc.craftable.client.menu.AmbientInventoryEvents.clear();
         RecipeBookStatusHandler.clearRequestState();
     }

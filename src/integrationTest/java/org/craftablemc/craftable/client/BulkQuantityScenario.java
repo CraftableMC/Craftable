@@ -58,8 +58,13 @@ final class BulkQuantityScenario {
 
     boolean tick(Minecraft mc) throws Exception {
         if (serverFailure != null) throw new AssertionError("Bulk server inventory verification failed", serverFailure);
-        if (++age > 1200) throw new AssertionError("Bulk quantity protocol timeout phase=" + phase + ", max="
-                + (overlay() == null ? "closed" : read(overlay(), "maximum")));
+        if (++age > 1200) {
+            var current = overlay();
+            var context = current == null ? "closed" : "max=" + read(current, "maximum")
+                    + ", pending=" + read(current, "pending") + ", notice=" + read(current, "notice");
+            throw new AssertionError("Bulk quantity protocol timeout phase=" + phase + ", " + context
+                    + ", witnessValidationsSinceClick=" + (counter("witnessValidations") - witnessBefore));
+        }
         if (phase == Phase.CONFIGURE_RESOURCES) {
             mc.setScreen(null);
             resources(mc);

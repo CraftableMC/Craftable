@@ -75,6 +75,23 @@ public final class ResourceLedger {
         return false;
     }
 
+    /** 按候选配方需求计数，包含未被占用的中间产物。到达上限后停止，不用于否定证明。
+     * Count up to a producer's demand, including unreserved intermediate stock. This is a ranking hint, not exclusion evidence. */
+    int availableUpTo(Ingredient ingredient, int cap) {
+        int count = 0;
+        for (var lot : generated) {
+            if (lot.available > 0 && !lot.terminal && !CraftingRecipes.protectedStack(lot.stack) && ingredient.test(lot.stack))
+                count += Math.min(cap - count, lot.available);
+            if (count == cap) return cap;
+        }
+        for (int slot = 0; slot < available.length; slot++) {
+            if (available[slot] > 0 && ingredient.test(sources.get(slot).stack))
+                count += Math.min(cap - count, available[slot]);
+            if (count == cap) return cap;
+        }
+        return count;
+    }
+
     /** 当前可用数量；根操作下界仅在初始账本、尚未预留网格或生成产物时调用。
      * Current usable count; the root step floor calls this only on the
      * initial ledger, before any grid reservations or generated production. */

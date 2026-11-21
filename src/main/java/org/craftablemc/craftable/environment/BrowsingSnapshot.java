@@ -21,7 +21,7 @@ public record BrowsingSnapshot(UUID session, long recipes, long resources, boole
         boolean limitedCrafting, Set<ResourceLocation> unlocked, boolean allowDrops,
         int maxBatches, int maxPlanSteps,
         org.craftablemc.craftable.config.DirectPreparationPolicy directPreparation, int inventoryMaximum,
-        List<ItemStack> inventory, List<Input> inputs) {
+        List<ItemStack> inventory, List<Input> inputs, int furnaceMask, boolean timeCompression, int maxFurnaceBatches) {
     public static final int MAX_INPUTS = 4096;
     public static final int MAX_UNLOCKED = 16_384;
 
@@ -33,6 +33,9 @@ public record BrowsingSnapshot(UUID session, long recipes, long resources, boole
                 || inventoryMaximum < 1 || inventoryMaximum > 99 || inventory.size() != 36
                 || inputs.size() > MAX_INPUTS || unlocked.size() > MAX_UNLOCKED)
             throw new IllegalArgumentException("Invalid browsing snapshot");
+        if ((furnaceMask & ~org.craftablemc.craftable.workstation.WorkstationCapability.COOKING_MASK) != 0
+                || maxFurnaceBatches < 1 || maxFurnaceBatches > org.craftablemc.craftable.config.CraftableServerConfig.MAX_MAX_FURNACE_BATCHES)
+            throw new IllegalArgumentException("Invalid furnace browsing rules");
         unlocked = Set.copyOf(unlocked);
         inventory = CraftPlan.copies(inventory);
         inputs = List.copyOf(inputs);
@@ -48,6 +51,16 @@ public record BrowsingSnapshot(UUID session, long recipes, long resources, boole
         // 外部受保护栈不进入 inputs，也不泄露组件数据。
         // Vanilla already syncs the player's inventory; exact components prevent fictitious merge space from plain placeholders.
         // Protected external stacks never enter inputs or expose component data.
+    }
+
+    /** 纯合成夹具/调用者不声明任何炉能力；有炉的运行路径必须显式传入新字段。 / Crafting-only callers claim no cooking capability; cooking runtime paths must supply the extra fields explicitly. */
+    public BrowsingSnapshot(UUID session, long recipes, long resources, boolean workbench,
+            boolean limitedCrafting, Set<ResourceLocation> unlocked, boolean allowDrops,
+            int maxBatches, int maxPlanSteps, org.craftablemc.craftable.config.DirectPreparationPolicy directPreparation,
+            int inventoryMaximum, List<ItemStack> inventory, List<Input> inputs) {
+        this(session, recipes, resources, workbench, limitedCrafting, unlocked, allowDrops,
+                maxBatches, maxPlanSteps, directPreparation, inventoryMaximum, inventory, inputs, 0, true,
+                org.craftablemc.craftable.config.CraftableServerConfig.DEFAULT_MAX_FURNACE_BATCHES);
     }
 
     @Override public List<ItemStack> inventory() { return CraftPlan.copies(inventory); }
@@ -73,7 +86,8 @@ public record BrowsingSnapshot(UUID session, long recipes, long resources, boole
      */
     public Object contentIdentity() {
         return List.of(recipes, workbench, limitedCrafting, unlocked, allowDrops,
-                maxBatches, maxPlanSteps, directPreparation, inventoryMaximum, CraftPlan.stackKeys(inventory), inputs.stream()
+                maxBatches, maxPlanSteps, directPreparation, furnaceMask, timeCompression, maxFurnaceBatches,
+                inventoryMaximum, CraftPlan.stackKeys(inventory), inputs.stream()
                         .map(input -> List.of(input.reference(), input.inventorySlot(),
                                 CraftPlan.stackKeys(List.of(input.stack())))).toList());
     }

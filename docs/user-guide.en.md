@@ -21,10 +21,12 @@ Hover over the recipe you want to make:
 | --- | --- |
 | Press C | Try one complete batch. For example, if a recipe makes four planks at once, you get all four. |
 | Double-press C on the same recipe when materials are missing | Request partial preparation. The first press still tries a full craft, and you need to release the key between presses. One failed press or holding the key won't automatically use up some of the materials. |
-| Shift+C | Open details, look through the item chain, choose recipes, the final material, and quantities/MAX, then click Craft. Just looking or changing the plan doesn't consume anything. |
-| Vanilla recipe placement and manual crafting | Still work as usual, including in the inventory's nearby-table 3×3 grid. Recipe placement uses carried materials; press C when you want materials from nearby containers. |
+| Shift+C | Open the item chain. Click the target or an intermediate item to choose a recipe, or adjust the final material and quantities/MAX. Click Craft when you're ready to make it. |
+| Left-click | If you've learned the crafting recipe and it fits the current grid, fill it with carried materials or show a ghost pattern. Cooking recipes, unlearned recipes, and recipes that need a larger grid open details. Press C to use materials from nearby containers. |
 
 The default crafting key is C, and you can change it in vanilla Controls. Shift follows the rebound key. The crafting key won't steal chat or search input.
+
+Craftable removes the right-click popup from the enhanced Recipe Book. The recipe cards in details show the crafting pattern or the cooking input and result, along with the workstation you need.
 
 Also, when the interface gets too narrow, vanilla's Recipe Book overlaps part of the inventory instead of sitting beside it. Craftable keeps that layout as it is.
 
@@ -57,6 +59,18 @@ Items on your cursor and in the current 2×2/3×3 crafting grid count as materia
 
 Vanilla Spectator has a slightly surprising quirk: the Recipe Book may still be visible, even though you can't use it. Craftable follows vanilla here; its crafting ability isn't enabled in Creative or Spectator.
 
+## Furnace processing
+
+When a chain needs smelting or cooking, have the right furnace nearby, with its slots empty, and some fuel available. For example, you can start an iron pickaxe with raw iron when you're short on ingots.
+
+You can also search for “Iron Ingot” in the inventory Recipe Book. Different ways to make the same item share a button. Left-click a furnace recipe to see its details, or press C to process it. The 2×2 inventory screen works with a nearby furnace. The top left of the details page shows the workstations available to you.
+
+Lit, empty campfires and soul campfires can cook food using just the raw ingredients. With instant processing off, relight an extinguished campfire to resume cooking.
+
+The world's **Instant processing** setting is on by default. If you turn it off, Craftable takes the inputs as soon as you submit. Processing follows the workstation and keeps going after you close the inventory or crafting table. Hover over the crafting arrow or the progress bar to see how long is left, why it paused, or whether the items are ready.
+
+Processing pauses if the chunk stops ticking or you're using the workstation by hand. Once the items are ready, they go into your main inventory as soon as everything fits. If the workstation is broken before the job finishes, Craftable returns the inputs it took.
+
 ## Which materials can I use?
 
 - Main inventory, the current 2×2/3×3 crafting grid, and the cursor stack.
@@ -76,9 +90,9 @@ Some things are still in development. Others, like result slots and equipment, a
 - Contents of carried shulker boxes, bundles, and similar item containers.
 - Ender inventory access from an ender chest *item* in your inventory or nearby. For now, it needs to be placed as a block.
 - Dropped items and entity inventories.
-- Furnace processing, villager trading, entity interactions such as shearing or milking, and world interactions. For example, some mods turn one item into another when you put it in water; that sort of special processing can't plug in directly yet either.
+- Villager trading, entity interactions such as shearing or milking, and world interactions. For example, some mods turn one item into another when you put it in water. That sort of special processing can't plug in directly yet either.
 
-Current support covers validated ordinary crafting recipes. Adding an ID to the whitelist won't make an unsupported crafting method available.
+The whitelist controls which supported recipes can skip confirmation.
 
 ## Quantity, space, and partial preparation
 

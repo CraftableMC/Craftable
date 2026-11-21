@@ -123,7 +123,8 @@ final class BrowseSnapshotTransfers {
                     // Changed content is a distinct transfer; same-content re-sync is consumed once under the existing admission/concurrency limits.
                     transfer.resynced = !changed;
                 }
-                var fingerprint = new CraftingRecipes(player, snapshot.workbench()).planningInput().fingerprint();
+                var fingerprint = new CraftingRecipes(player, snapshot.workbench(), snapshot.directPreparation(),
+                        snapshot.furnaceMask(), snapshot.maxFurnaceBatches()).planningInput().fingerprint();
                 PacketDistributor.sendToPlayer(player,
                         new CraftingDetailPayloads.BrowseLease(transfer.request.menuId(), transfer.request.revision(),
                                 snapshot.session(), snapshot.recipes(), snapshot.resources(), now + 10, fingerprint, header,
@@ -131,7 +132,8 @@ final class BrowseSnapshotTransfers {
                                 new CraftableServerConfig.CraftingRules(
                                         snapshot.allowDrops() ? CraftableServerConfig.SurplusDelivery.DROP_OVERFLOW
                                                 : CraftableServerConfig.SurplusDelivery.REQUIRE_SPACE,
-                                        snapshot.maxBatches(), snapshot.maxPlanSteps(), snapshot.directPreparation())));
+                                        snapshot.maxBatches(), snapshot.maxPlanSteps(), snapshot.directPreparation(),
+                                        snapshot.timeCompression(), snapshot.maxFurnaceBatches()), snapshot.furnaceMask()));
             } catch (RuntimeException failure) {
                 // 规范化或捕获失败即丢弃保留的数据与资源绑定，冷却后再尝试，不发送半成品授权。
                 // Failed normalization/capture drops retained data and bindings, then cools down; no partial grant is sent.

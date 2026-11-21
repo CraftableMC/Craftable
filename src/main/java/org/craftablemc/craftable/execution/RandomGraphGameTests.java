@@ -96,9 +96,10 @@ public final class RandomGraphGameTests {
                                 lot.shrink(stack.getCount());
                             }
                             var input = CraftingInput.of(step.gridSize(), step.gridSize(), step.inputs());
-                            helper.assertTrue(step.recipe().value().matches(input, player.serverLevel()), "Invalid grid at seed " + index);
+                            var recipe = (net.minecraft.world.item.crafting.CraftingRecipe) step.recipe().value();
+                            helper.assertTrue(recipe.matches(input, player.serverLevel()), "Invalid grid at seed " + index);
                             helper.assertTrue(ItemStack.matches(step.output(),
-                                    step.recipe().value().assemble(input, player.registryAccess())), "Invented output at seed " + index);
+                                    recipe.assemble(input, player.registryAccess())), "Invented output at seed " + index);
                             step.inputs().forEach(s -> add(balance, s, -1));
                             add(balance, step.output(), 1);
                             step.remainders().forEach(s -> add(balance, s, 1));
