@@ -14,6 +14,9 @@ public final class CraftableServerConfig {
     public static final int DEFAULT_MAX_PLAN_STEPS = org.craftablemc.craftable.planner.SearchBudget.DEFAULT_MAX_STEPS;
     public static final int MIN_MAX_PLAN_STEPS = 1;
     public static final int MAX_MAX_PLAN_STEPS = org.craftablemc.craftable.planner.SearchBudget.HARD_MAX_STEPS;
+    public static final int DEFAULT_MAX_FURNACE_BATCHES = 64;
+    public static final int MIN_MAX_FURNACE_BATCHES = 1;
+    public static final int MAX_MAX_FURNACE_BATCHES = 64;
     public static final ModConfigSpec SPEC;
     private static final Values VALUES;
     // 仅缓存不可变规范值，不持有世界、玩家、菜单或配置文件句柄。
@@ -32,7 +35,8 @@ public final class CraftableServerConfig {
     public static CraftingRules craftingRules() {
         var preparation = directPreparationPolicy();
         return new CraftingRules(VALUES.surplusDelivery.get(),
-                VALUES.maxCraftBatch.get(), VALUES.maxPlanSteps.get(), preparation);
+                VALUES.maxCraftBatch.get(), VALUES.maxPlanSteps.get(), preparation,
+                VALUES.timeCompression.get(), VALUES.maxFurnaceBatches.get());
     }
 
     /** 原版页与专业页编辑同一注册值，不另设默认值、校验器或存储。 / Native/professional editors share registered values, defaults, validators and storage. */
@@ -70,13 +74,21 @@ public final class CraftableServerConfig {
 
     /** 不可变规则边界也用于网络解码；构造时拒绝越界限制。 / Immutable rule boundary shared with network decoding; construction rejects out-of-range limits. */
     public record CraftingRules(SurplusDelivery surplusDelivery, int maxBatches, int maxPlanSteps,
-            DirectPreparationPolicy directPreparation) {
+            DirectPreparationPolicy directPreparation, boolean timeCompression, int maxFurnaceBatches) {
         public CraftingRules {
             java.util.Objects.requireNonNull(surplusDelivery, "surplusDelivery");
             java.util.Objects.requireNonNull(directPreparation, "directPreparation");
             if (maxBatches < 1 || maxBatches > 64) throw new IllegalArgumentException("maxBatches must be between 1 and 64");
             if (maxPlanSteps < MIN_MAX_PLAN_STEPS || maxPlanSteps > MAX_MAX_PLAN_STEPS)
                 throw new IllegalArgumentException("maxPlanSteps must be between 1 and 256");
+            if (maxFurnaceBatches < MIN_MAX_FURNACE_BATCHES || maxFurnaceBatches > MAX_MAX_FURNACE_BATCHES)
+                throw new IllegalArgumentException("maxFurnaceBatches must be between 1 and 64");
+        }
+
+        /** 无炉调用仍使用同一有界默认规则，不引入另一配置来源。 / Furnace-free callers retain the same bounded defaults, not another config source. */
+        public CraftingRules(SurplusDelivery surplusDelivery, int maxBatches, int maxPlanSteps,
+                DirectPreparationPolicy directPreparation) {
+            this(surplusDelivery, maxBatches, maxPlanSteps, directPreparation, true, DEFAULT_MAX_FURNACE_BATCHES);
         }
     }
 
@@ -100,6 +112,8 @@ public final class CraftableServerConfig {
         private final ModConfigSpec.EnumValue<SurplusDelivery> surplusDelivery;
         private final ModConfigSpec.IntValue maxCraftBatch;
         private final ModConfigSpec.IntValue maxPlanSteps;
+        private final ModConfigSpec.BooleanValue timeCompression;
+        private final ModConfigSpec.IntValue maxFurnaceBatches;
         private final ModConfigSpec.EnumValue<DirectPreparationPolicy.Mode> directPreparationMode;
         private final ModConfigSpec.ConfigValue<List<String>> directPreparationAllowedRecipes;
 
@@ -146,6 +160,15 @@ public final class CraftableServerConfig {
                     .comment("Maximum actual recipe executions in one plan, including root and intermediate recipes.",
                             "This does not increase search time, memory or packet limits; unresolved plans remain unknown.")
                     .defineInRange("maxPlanSteps", DEFAULT_MAX_PLAN_STEPS, MIN_MAX_PLAN_STEPS, MAX_MAX_PLAN_STEPS);
+            timeCompression = builder.translation("config.craftable.server.time_compression")
+                    .comment("Deliver furnace and campfire processing immediately when enabled.",
+                            "When disabled, submission takes the inputs up front and the workstation processes while its chunk runs.")
+                    .define("timeCompression", true);
+            maxFurnaceBatches = builder.translation("config.craftable.server.max_furnace_batches")
+                    .comment("Maximum furnace and campfire recipe executions in one plan, including intermediate processing.",
+                            "This does not enlarge the shared search, step, memory or network limits.")
+                    .defineInRange("maxFurnaceBatches", DEFAULT_MAX_FURNACE_BATCHES,
+                            MIN_MAX_FURNACE_BATCHES, MAX_MAX_FURNACE_BATCHES);
             directPreparationMode = builder.translation("config.craftable.server.direct_preparation_mode")
                     .comment("Partial-crafting policy for explicit partial requests only; a single C never consumes a partial plan.",
                             "CUSTOM uses only the no-confirmation recipe-ID whitelist; ALL_SUPPORTED skips additional partial confirmation; REQUIRE_CONFIRMATION always asks.",

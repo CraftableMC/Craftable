@@ -23,7 +23,7 @@ class SettingsPayloadTest {
         var policy = DirectPreparationPolicy.of(DirectPreparationPolicy.Mode.CUSTOM,
                 java.util.List.of("future:recipe", "minecraft:stick"));
         var rules = new CraftableServerConfig.CraftingRules(
-                CraftableServerConfig.SurplusDelivery.REQUIRE_SPACE, 64, 128, policy);
+                CraftableServerConfig.SurplusDelivery.REQUIRE_SPACE, 64, 128, policy, false, 17);
         try {
             var response = new SettingsPayloads.RulesResponse(20, new EnvironmentScanSettings(8, 4, 5, true), rules);
             SettingsPayloads.RulesResponse.CODEC.encode(buffer, response);
@@ -31,7 +31,9 @@ class SettingsPayloadTest {
             assertFalse(buffer.isReadable());
             buffer.clear();
             var lease = new CraftingDetailPayloads.BrowseLease(1, 20, java.util.UUID.randomUUID(), 2, 3, 100,
-                    "a".repeat(64), null, response.scan(), true, rules);
+                    "a".repeat(64), null, response.scan(), true, rules,
+                    org.craftablemc.craftable.workstation.WorkstationCapability.FURNACE.bit()
+                            | org.craftablemc.craftable.workstation.WorkstationCapability.SMOKER.bit());
             CraftingDetailPayloads.BrowseLease.CODEC.encode(buffer, lease);
             assertEquals(lease, CraftingDetailPayloads.BrowseLease.CODEC.decode(buffer));
             assertFalse(buffer.isReadable());
@@ -133,5 +135,19 @@ class SettingsPayloadTest {
             buffer.writeBoolean(true); buffer.writeVarInt(body.readableBytes()); buffer.writeBytes(body);
             assertThrows(IllegalArgumentException.class, () -> CraftingWire.witness(buffer));
         } finally { body.release(); buffer.release(); }
+    }
+
+    @Test void malformedFurnaceBatchLimitsFailInTheSharedRulesDecoder() {
+        var buffer = new RegistryFriendlyByteBuf(Unpooled.buffer(), RegistryAccess.EMPTY, ConnectionType.OTHER);
+        try {
+            for (int invalid : new int[]{-1, 0, 65, Integer.MAX_VALUE}) {
+                buffer.clear();
+                buffer.writeEnum(CraftableServerConfig.SurplusDelivery.REQUIRE_SPACE);
+                buffer.writeVarInt(64); buffer.writeVarInt(128);
+                SettingsPayloads.writeDirectPreparation(buffer, DirectPreparationPolicy.DEFAULT);
+                buffer.writeBoolean(false); buffer.writeVarInt(invalid);
+                assertThrows(IllegalArgumentException.class, () -> SettingsPayloads.readCrafting(buffer));
+            }
+        } finally { buffer.release(); }
     }
 }

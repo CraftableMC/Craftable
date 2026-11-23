@@ -55,6 +55,7 @@ public final class SettingsPayloads {
         buffer.writeEnum(rules.surplusDelivery());
         buffer.writeVarInt(rules.maxBatches()); buffer.writeVarInt(rules.maxPlanSteps());
         writeDirectPreparation(buffer, rules.directPreparation());
+        buffer.writeBoolean(rules.timeCompression()); buffer.writeVarInt(rules.maxFurnaceBatches());
     }
 
     static CraftableServerConfig.CraftingRules readCrafting(RegistryFriendlyByteBuf buffer) {
@@ -62,7 +63,10 @@ public final class SettingsPayloads {
         int batches = CraftingWire.count(buffer, CraftRequest.MAX_BATCHES);
         if (batches == 0) throw new IllegalArgumentException("Zero batch limit");
         int steps = org.craftablemc.craftable.planner.SearchBudget.requireStepLimit(buffer.readVarInt());
-        return new CraftableServerConfig.CraftingRules(delivery, batches, steps, readDirectPreparation(buffer));
+        var preparation = readDirectPreparation(buffer);
+        boolean compression = buffer.readBoolean();
+        int furnaceBatches = CraftingWire.count(buffer, CraftableServerConfig.MAX_MAX_FURNACE_BATCHES);
+        return new CraftableServerConfig.CraftingRules(delivery, batches, steps, preparation, compression, furnaceBatches);
     }
 
     /** 有界确认偏好，不增加配方知识或执行权限。 / Bounded consent values, never new recipe knowledge or execution authority. */

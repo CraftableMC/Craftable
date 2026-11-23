@@ -367,13 +367,15 @@ public final class CraftSearch {
                 // Partial preparation keeps its stricter history-sensitive key.
                 if (!partialMode && state.grids.isEmpty() && state.active.isEmpty()) {
                     if (!rememberIdentity(completedPrefixes,
-                            () -> List.of(state.completed, state.steps.size(), state.ledger.batchBoundaryIdentity()),
+                            () -> List.of(state.completed, state.steps.size(), state.ledger.batchBoundaryIdentity(), state.heatIdentity()),
                             state.ledger.identityBytes(), state)) continue;
                 }
                 expandRecipe(state, r.recipe, "0", 0, null);
                 push(state);
             } else if (task instanceof Finish finish) {
-                Grid grid = state.grids.remove(finish.grid);
+                Grid grid = state.grids.get(finish.grid);
+                if (!grid.missing && finish.recipe.furnace() != null && !fuelReady(state, grid, finish)) continue;
+                state.grids.remove(finish.grid);
                 state.active.remove(finish.recipe.id());
                 if (grid.missing) {
                     if (!partialMode) continue;
@@ -396,7 +398,17 @@ public final class CraftSearch {
                     state.results.put(finish.grid, -1);
                 } else {
                     if (state.steps.size() >= maxPlanSteps) { budget.truncate(); continue; }
-                    CraftPlan.Step step = recipes.assemble(finish.recipe, finish.path, grid.items());
+                    List<ItemStack> inputs = grid.items();
+                    List<Integer> origins = java.util.Arrays.stream(grid.taken).map(state.ledger::origin).toList();
+                    if (finish.recipe.furnace() != null) {
+                        inputs = new ArrayList<>(inputs);
+                        origins = new ArrayList<>(origins);
+                        for (var fuel : grid.fuels) {
+                            inputs.add(fuel.stack());
+                            origins.add(state.ledger.origin(fuel));
+                        }
+                    }
+                    CraftPlan.Step step = recipes.assemble(finish.recipe, finish.path, inputs);
                     if (step == null) { failure = CraftingResultCode.UNSUPPORTED_RECIPE; continue; }
                     if (!budget.alive()) break;
                     // 趁真实批次引用仍在时记录；事后按物品 ID 重建会错归共享余量、混合批次或已消耗返还物。
@@ -404,8 +416,7 @@ public final class CraftSearch {
                     // Reconstructing by item ID later would misattribute shared
                     // surplus, mixed batches or a consumed crafting remainder.
                     step = new CraftPlan.Step(step.recipe(), step.path(), step.gridSize(), step.inputs(),
-                            step.output(), step.remainders(), java.util.Arrays.stream(grid.taken)
-                                    .map(state.ledger::origin).toList());
+                            step.output(), step.remainders(), origins);
                     int origin = state.steps.size();
                     state.steps.add(step);
                     int lot = state.ledger.produce(step.output(), finish.root, false, finish.path, origin);
@@ -435,7 +446,7 @@ public final class CraftSearch {
                 // A chosen birch-plank producer also selects birch planks as
                 // this OR-ingredient's item. Otherwise another branch's oak
                 // surplus could silently bypass the user's explicit choice.
-                Need need = selected == null ? originalNeed : new Need(Ingredient.of(selected.output()),
+                Need need = selected == null || originalNeed.ingredient.isCustom() ? originalNeed : new Need(Ingredient.of(selected.output()),
                         originalNeed.grid, originalNeed.slot, originalNeed.path, originalNeed.depth, originalNeed.producersOnly);
                 var existing = need.producersOnly ? List.<ResourceLedger.Taken>of() : state.ledger.choices(need.ingredient);
                 // 保留具体首选续算；备用分支从未改动前像复制，无法保留额外备用也不能丢弃首条路线。
@@ -449,7 +460,9 @@ public final class CraftSearch {
                     if (!canFork(state, branches.size())) break;
                     branches.add(s -> bind(s, need, taken));
                 }
-                boolean deferProducers = !existingOnly && !partialMode && !existing.isEmpty();
+                var parent = state.grids.get(need.grid).recipe;
+                boolean allowProducers = !existingOnly && !recipes.requiresExistingProcessingInput(parent);
+                boolean deferProducers = allowProducers && !partialMode && !existing.isEmpty();
                 if (deferProducers && (!recipes.producing(need.ingredient).isEmpty() || recipes.hasUnsupportedProducer(need.ingredient))
                         && canFork(state, branches.size()))
                     branches.add(s -> s.tasks.addFirst(new Need(need.ingredient, need.grid, need.slot, need.path, need.depth, true)));
@@ -457,8 +470,8 @@ public final class CraftSearch {
                 // Ranking every producer of every already-bound surplus slot
                 // is wasteful. The fallback owns the same preimage and ranks
                 // them only if existing stock really fails downstream.
-                List<Entry> candidates = existingOnly || deferProducers ? new ArrayList<>() : new ArrayList<>(recipes.producing(need.ingredient));
-                if (!existingOnly && !deferProducers && recipes.hasUnsupportedProducer(need.ingredient)) {
+                List<Entry> candidates = !allowProducers || deferProducers ? new ArrayList<>() : new ArrayList<>(recipes.producing(need.ingredient));
+                if (allowProducers && !deferProducers && recipes.hasUnsupportedProducer(need.ingredient)) {
                     // 省略未知谓词不得证明不可能并授权部分消耗；保留的具体全量见证仍可成功，但否定未被证明。
                     // Omitting unknown predicates must not prove impossibility
                     // and thereby authorize partial consumption. A known full
@@ -471,16 +484,21 @@ public final class CraftSearch {
                 // deficit but may not replace already-available intermediates
                 // just to manufacture a superficially "productive" frontier.
                 if (partialMode && !existing.isEmpty()) candidates.clear();
-                var pinned = request.selections().get(need.path);
-                if (pinned != null) candidates.removeIf(e -> !e.id().equals(pinned));
+                if (pinnedId != null) candidates.removeIf(e -> !e.id().equals(pinnedId));
+                if (!candidates.isEmpty()) {
+                    boolean automatic = pinnedId == null && request.selections().keySet().stream()
+                            .noneMatch(path -> path.startsWith(need.path + "."));
+                    candidates.removeIf(e -> state.active.contains(e.id()) || recipes.isExactInverse(e, parent)
+                            || pinnedId == null && e.collectsWater()
+                            || recipes.requiresExistingProcessingInput(e) && !state.ledger.has(e.requirements().getFirst().ingredient())
+                            || automatic && recipes.cannotImproveDemand(e, need.ingredient, parent));
+                }
                 candidates.sort(Comparator.<Entry>comparingInt(e -> estimatedMissing(e, state.ledger))
                         .thenComparing(e -> e.id().toString()));
                 boolean permissionBlocked = false;
                 CraftingResultCode blockedReason = null;
                 int considered = 0;
                 for (Entry candidate : candidates) {
-                    if (state.active.contains(candidate.id())) continue;
-                    if (recipes.isExactInverse(candidate, state.grids.get(need.grid).recipe)) continue;
                     // 可达性属于候选的输入而非仅其产物：经木板可达木棍不代表已有竹子起点。
                     // 无起点且锁定的转换不能成为拒绝另一条已解锁目标有效准备的理由。
                     // Reachability belongs to a candidate's inputs, not merely
@@ -500,6 +518,10 @@ public final class CraftSearch {
                             && !recipes.hasUnsupportedProducer(r.ingredient()) && !recipes.mayReturn(r.ingredient()))) continue;
                     var denied = recipes.unavailable(candidate);
                     if (denied != null) {
+                        // 无已绑定炉料的假设路线不应掩盖已有配方的真实缺料。
+                        // A hypothetical furnace route without its input in the ledger must not eclipse a concrete material deficit.
+                        if (candidate.furnace() != null && denied == CraftingResultCode.MISSING_WORKSTATION
+                                && !state.ledger.has(candidate.requirements().getFirst().ingredient())) continue;
                         permissionBlocked = true;
                         blockedReason = denied;
                         continue;
@@ -550,29 +572,29 @@ public final class CraftSearch {
                 // All deferred alternatives share one immutable preimage.
                 // Clone/expand only the branch actually visited, rather than
                 // all producers of every already-available ingredient slot.
-                State preimage = branches.isEmpty() ? null : state.copy();
-                preferred.accept(state);
-                // 先保留首选路线再接纳备选；增长只能挤出最低优先级旧备选，省略使否定失效而不否定具体成功见证。
-                // Reserve the preferred route before admitting any backups.
-                // Its growth can evict only the lowest-priority old backups;
-                // omissions invalidate negative evidence, not a full witness.
-                if (!makeRoom(state)) continue;
-                int kept = 0;
-                long room = MAX_RETAINED_BYTES - frontierBytes - memoBytes - state.retainedBytes();
-                while (kept < branches.size() && kept < SearchBudget.MAX_FRONTIER - frontier.size() - 1) {
-                    long bytes = new Branch(preimage, branches.get(kept)).retainedBytes();
-                    if (bytes > room) break;
-                    room -= bytes;
-                    kept++;
-                }
-                if (kept < branches.size()) budget.truncate();
-                for (int i = kept - 1; i >= 0; i--) {
-                    retain(new Branch(preimage, branches.get(i)));
-                }
-                retain(new Branch(state, null));
+                choose(state, preferred, branches);
             }
         }
         return null;
+    }
+
+    private void choose(State state, Consumer<State> preferred, List<Consumer<State>> alternatives) {
+        State preimage = alternatives.isEmpty() ? null : state.copy();
+        preferred.accept(state);
+        // 先为首选路线保留空间，略过备选时只能保留已证明的成功，不能证明无解。
+        // Reserve the preferred route first. Omitted alternatives invalidate a denial, not proven success.
+        if (!makeRoom(state)) return;
+        int kept = 0;
+        long room = MAX_RETAINED_BYTES - frontierBytes - memoBytes - state.retainedBytes();
+        while (kept < alternatives.size() && kept < SearchBudget.MAX_FRONTIER - frontier.size() - 1) {
+            long bytes = new Branch(preimage, alternatives.get(kept)).retainedBytes();
+            if (bytes > room) break;
+            room -= bytes;
+            kept++;
+        }
+        if (kept < alternatives.size()) budget.truncate();
+        for (int slot = kept - 1; slot >= 0; slot--) retain(new Branch(preimage, alternatives.get(slot)));
+        retain(new Branch(state, null));
     }
 
     private boolean rememberIdentity(Set<Object> identities, Supplier<Object> identity, long bytes, State current) {
@@ -678,6 +700,65 @@ public final class CraftSearch {
         state.bindings++;
     }
 
+    /** 每种炉型在同一条路线内共用余火，燃料从材料账本实际预留。
+     * Heat stays within one route and furnace type; fuel is reserved from the material ledger. */
+    private boolean fuelReady(State state, Grid grid, Finish finish) {
+        if (state.cookingBatches >= recipes.maxFurnaceBatches()) {
+            state.rejected = CraftingResultCode.FURNACE_BATCH_LIMIT;
+            remember(state);
+            return false;
+        }
+        var furnace = finish.recipe.furnace();
+        if (!furnace.requiresFuel()) {
+            state.cookingBatches++;
+            return true;
+        }
+        if (state.heat == null) state.heat = new java.util.EnumMap<>(org.craftablemc.craftable.workstation.WorkstationCapability.class);
+        int heat = state.heat.getOrDefault(furnace.station(), 0);
+        // 捕获路线的熔岩桶已在原料账本中扣除。只在炉步骤完成时结转一次热量。
+        // The water route's lava bucket is already debited. Carry its heat forward exactly once, at step completion.
+        if (finish.recipe.collectsWater() && grid.taken[1].stack().is(net.minecraft.world.item.Items.LAVA_BUCKET)) {
+            int lavaHeat = recipes.fuelTicks(furnace, grid.taken[1].stack());
+            if (lavaHeat == 0) { state.rejected = CraftingResultCode.MISSING_FUEL; remember(state); return false; }
+            heat += lavaHeat;
+        }
+        if (heat >= furnace.ticks()) {
+            state.heat.put(furnace.station(), heat - furnace.ticks());
+            state.cookingBatches++;
+            return true;
+        }
+        if (grid.fuels.size() == 8) {
+            budget.truncate();
+            return false;
+        }
+        var options = state.ledger.choices(recipes.fuels(furnace));
+        if (options.isEmpty()) {
+            state.rejected = CraftingResultCode.MISSING_FUEL;
+            remember(state);
+            return false;
+        }
+        int deficit = furnace.ticks() - heat;
+        options.sort(Comparator.comparingInt(taken -> {
+            int ticks = recipes.fuelTicks(furnace, taken.stack());
+            return ticks >= deficit ? ticks - deficit : 32_000 + deficit - ticks;
+        }));
+        var alternatives = new ArrayList<Consumer<State>>();
+        for (int i = 1; i < options.size() && canFork(state, alternatives.size()); i++)
+            alternatives.add(burnFuel(finish, options.get(i)));
+        choose(state, burnFuel(finish, options.getFirst()), alternatives);
+        return false;
+    }
+
+    private Consumer<State> burnFuel(Finish finish, ResourceLedger.Taken fuel) {
+        var furnace = finish.recipe.furnace();
+        return state -> {
+            state.ledger.take(fuel);
+            state.grids.get(finish.grid).fuels.add(fuel);
+            state.heat.merge(furnace.station(), recipes.fuelTicks(furnace, fuel.stack()), Math::addExact);
+            state.tasks.addFirst(finish);
+        };
+    }
+
     /** 仅为必要操作数下界：每个根需一次操作，固定重复材料至少再需 ceil(缺口/最大产量) 次。
      * 返还物/未知生产者会禁用该下界，重叠材料组只各自检查不相加；通过不证明材料或交付可行。
      * Necessary operation count only. Each root needs one operation; a fixed
@@ -714,8 +795,19 @@ public final class CraftSearch {
     }
 
     private int estimatedMissing(Entry entry, ResourceLedger ledger) {
+        // 一粒铁粒不能让九粒合锭排到现成矿石前。只在材料完全同类时用整批数量来排序。
+        // One nugget cannot make a batch of nine appear as cheap as smelting available ore. Count identical slots jointly.
+        var requirements = entry.requirements();
+        if (requirements.size() > 1) {
+            var first = requirements.getFirst().ingredient();
+            var items = first.getItems();
+            if (items.length == 1 && requirements.stream().allMatch(r -> {
+                var options = r.ingredient().getItems();
+                return options.length == 1 && ItemStack.isSameItem(items[0], options[0]);
+            })) return requirements.size() - ledger.availableUpTo(first, requirements.size());
+        }
         int result = 0;
-        for (var requirement : entry.requirements()) if (!ledger.has(requirement.ingredient())) result++;
+        for (var requirement : requirements) if (!ledger.has(requirement.ingredient())) result++;
         return result;
     }
 
@@ -732,10 +824,11 @@ public final class CraftSearch {
             shared.attempts++;
         }
         Set<Item> result = shared.working;
+        var entries = recipes.reachableEntries();
         while (true) {
-            while (shared.cursor < recipes.entries().size()) {
+            while (shared.cursor < entries.size()) {
                 if (!allowance.canContinue()) return false;
-                Entry entry = recipes.entries().get(shared.cursor++);
+                Entry entry = entries.get(shared.cursor++);
                 // 松弛忽略权限以保留对真实被锁中间物的诊断；实际展开时逐配方校验，此集合从不授权。
                 // This relaxation ignores permissions so a genuinely needed
                 // locked intermediate can still be diagnosed by search. Every
@@ -819,6 +912,7 @@ public final class CraftSearch {
     private static final class Grid {
         final Entry recipe;
         final ResourceLedger.Taken[] taken;
+        final List<ResourceLedger.Taken> fuels = new ArrayList<>();
         boolean missing;
         Need parent;
         ResourceLedger before;
@@ -827,11 +921,12 @@ public final class CraftSearch {
         int startBindings;
         Grid(Entry recipe) {
             this.recipe = recipe;
-            taken = new ResourceLedger.Taken[recipe.gridSize() * recipe.gridSize()];
+            taken = new ResourceLedger.Taken[recipe.inputSlots()];
         }
         Grid copy() {
             Grid copy = new Grid(recipe);
             System.arraycopy(taken, 0, copy.taken, 0, taken.length);
+            copy.fuels.addAll(fuels);
             copy.missing = missing;
             copy.parent = parent;
             copy.before = before;
@@ -845,7 +940,7 @@ public final class CraftSearch {
         }
         Object identity() {
             return List.of(missing, java.util.Arrays.stream(taken).map(t -> t == null ? List.of()
-                    : List.of(t.source(), t.lot(), ResourceLedger.Key.of(t.stack()))).toList());
+                    : List.of(t.source(), t.lot(), ResourceLedger.Key.of(t.stack()))).toList(), fuels);
         }
     }
 
@@ -860,6 +955,8 @@ public final class CraftSearch {
         int nextGrid;
         int completed;
         int bindings;
+        int cookingBatches;
+        java.util.EnumMap<org.craftablemc.craftable.workstation.WorkstationCapability, Integer> heat;
         CraftingResultCode rejected;
 
         State(ResourceLedger ledger) { this.ledger = ledger; }
@@ -881,14 +978,17 @@ public final class CraftSearch {
             copy.nextGrid = nextGrid;
             copy.completed = completed;
             copy.bindings = bindings;
+            copy.cookingBatches = cookingBatches;
+            if (heat != null) copy.heat = new java.util.EnumMap<>(heat);
             copy.rejected = rejected;
             return copy;
         }
         Object identity(Need current) {
             var gridKeys = new java.util.TreeMap<Integer, Object>();
             grids.forEach((id, grid) -> gridKeys.put(id, grid.identity()));
-            return List.of(current, List.copyOf(tasks), ledger.identity(), gridKeys, Set.copyOf(active),
+            return List.of(current, List.copyOf(tasks), ledger.identity(), gridKeys, Set.copyOf(active), heatIdentity(),
                     completed, bindings, steps.stream().map(s -> List.of(s.recipe().id(), s.path())).toList(), Map.copyOf(results));
         }
+        Object heatIdentity() { return heat == null ? List.of() : List.of(Map.copyOf(heat), cookingBatches); }
     }
 }

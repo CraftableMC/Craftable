@@ -33,12 +33,20 @@ class CraftingDetailPayloadTest {
                     new org.craftablemc.craftable.config.CraftableServerConfig.CraftingRules(
                             org.craftablemc.craftable.config.CraftableServerConfig.SurplusDelivery.REQUIRE_SPACE, 64, 256,
                             org.craftablemc.craftable.config.DirectPreparationPolicy.of(
-                                    org.craftablemc.craftable.config.DirectPreparationPolicy.Mode.DISABLED, java.util.List.of())));
+                                    org.craftablemc.craftable.config.DirectPreparationPolicy.Mode.DISABLED, java.util.List.of()), false, 17),
+                    org.craftablemc.craftable.workstation.WorkstationCapability.BLAST_FURNACE.bit()
+                            | org.craftablemc.craftable.workstation.WorkstationCapability.CAMPFIRE.bit());
             CraftingDetailPayloads.BrowseLease.CODEC.encode(buffer, lease);
             assertTrue(buffer.readableBytes() < 1024);
             var decoded = CraftingDetailPayloads.BrowseLease.CODEC.decode(buffer);
             assertEquals(lease.session(), decoded.session()); assertEquals(lease.settings(), decoded.settings());
             assertEquals(lease.rules(), decoded.rules());
+            assertEquals(lease.furnaceMask(), decoded.furnaceMask());
+            for (int invalid : new int[]{-1, Integer.MAX_VALUE,
+                    org.craftablemc.craftable.workstation.WorkstationCapability.CRAFTING_2X2.bit()})
+                assertThrows(IllegalArgumentException.class, () -> new CraftingDetailPayloads.BrowseLease(
+                        lease.menuId(), lease.revision(), lease.session(), lease.recipes(), lease.resources(), lease.expires(),
+                        lease.fingerprint(), lease.header(), lease.settings(), lease.workbench(), lease.rules(), invalid));
             assertArrayEquals(header.digest(), decoded.header().digest());
             buffer.clear();
             var chunk = new CraftingDetailPayloads.BrowseChunk(1, 9, session, transfer, 0, new byte[]{1,2,3});

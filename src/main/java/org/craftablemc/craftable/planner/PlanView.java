@@ -61,7 +61,7 @@ public record PlanView(CraftingResultCode code, boolean workbench, boolean compl
 
     public record Candidate(ResourceLocation recipe, ItemStack output, int gridSize, CraftingResultCode rejection) {
         public Candidate {
-            if (output.isEmpty() || gridSize < 2 || gridSize > 3) throw new IllegalArgumentException("Invalid recipe candidate");
+            if (output.isEmpty() || gridSize < 1 || gridSize > 3) throw new IllegalArgumentException("Invalid recipe candidate");
             output = output.copy();
         }
         @Override public ItemStack output() { return output.copy(); }
@@ -353,18 +353,33 @@ public record PlanView(CraftingResultCode code, boolean workbench, boolean compl
                 if (recipe != null && (child.hypothetical == null || child.hypothetical.id().equals(recipe.id()))
                         && !related(source.getKey(), childPath) && !active.contains(recipe.id())
                         && requirement.ingredient().test(recipe.output()) && (chosen == null || chosen.equals(recipe.id()))
+                        && (chosen != null || canReuseProducer(catalog, source.getValue(), requirement.ingredient(), deficit, stock))
                         && !hasChildSelection(request, childPath) && !hasChildSelection(request, source.getKey())) {
                     supply = source; break;
                 }
             }
             var producers = catalog.producing(requirement.ingredient());
             var actualRecipes = nodes.values().stream().filter(n -> n.actual).flatMap(n -> n.recipes.stream()).toList();
-            var producer = supply != null ? supply.getValue().hypothetical : child.hypothetical != null ? child.hypothetical
-                    : chosen == null ? producers.stream().filter(e -> !active.contains(e.id()))
+            var inputDeficits = new java.util.HashMap<ResourceLocation, Long>();
+            var candidateStock = new int[stock.size()];
+            java.util.function.ToLongFunction<CraftingRecipes.Entry> missingInputCount = e -> inputDeficits.computeIfAbsent(
+                    e.id(), ignored -> missingInputs(e, deficit, stock, candidateStock));
+            var current = child.hypothetical != null && (chosen != null
+                    || canReuseProducer(catalog, child, requirement.ingredient(), deficit, stock)) ? child.hypothetical : null;
+            var producer = supply != null ? supply.getValue().hypothetical : current != null ? current
+                    : chosen == null ? producers.stream().filter(e -> !active.contains(e.id()) && !e.collectsWater())
+                    .filter(e -> catalog.unavailable(e) != CraftingResultCode.UNSUPPORTED_RECIPE)
                     .filter(e -> !returnsToActiveConversion(catalog, e, active))
                     .filter(e -> !conversionCycleWithoutStock(catalog, e, stock))
                     .filter(e -> !onlyReprocessesAcceptedItems(e, requirement.ingredient()))
-                    .min(java.util.Comparator.<CraftingRecipes.Entry, Boolean>comparing(e -> !actualRecipes.contains(e.id()))
+                    // 默认草图只说明有用的补料方向，不靠换色增殖需求，也不建议先制造装备再熔回金属粒。
+                    // Default sketches explain useful supply paths, not recoloring loops or equipment manufactured solely for recycling.
+                    .filter(e -> !catalog.cannotImproveDemand(e, requirement.ingredient(), entry))
+                    .filter(e -> !catalog.requiresExistingProcessingInput(e) || missingInputCount.applyAsLong(e) == 0)
+                    .min(java.util.Comparator.<CraftingRecipes.Entry, Boolean>comparing(e -> missingInputCount.applyAsLong(e) != 0)
+                            .thenComparing(e -> catalog.unavailable(e) != null)
+                            .thenComparingLong(missingInputCount)
+                            .thenComparing(e -> !actualRecipes.contains(e.id()))
                             .thenComparing(CraftingRecipes.Entry::id)).orElse(null)
                     : catalog.find(chosen);
             if (producer != null && catalog.unavailable(producer) != CraftingResultCode.UNSUPPORTED_RECIPE
@@ -414,6 +429,16 @@ public record PlanView(CraftingResultCode code, boolean workbench, boolean compl
         return request.selections().keySet().stream().anyMatch(p -> p.startsWith(path + "."));
     }
 
+    /** 已用掉的回收装备不能支撑下一份铁粒。 / Gear already counted by the sketch cannot supply the next nugget. */
+    private static boolean canReuseProducer(PlanningInput catalog, MutableNode source,
+            net.minecraft.world.item.crafting.Ingredient demand, int deficit, List<ItemStack> stock) {
+        var producer = source.hypothetical;
+        if (!catalog.requiresExistingProcessingInput(producer)) return true;
+        long missing = Math.max(0L, (long) deficit - count(source.remaining, demand));
+        int yield = producer.output().getCount();
+        return count(stock, producer.requirements().getFirst().ingredient()) >= (missing + yield - 1) / yield;
+    }
+
     private static boolean returnsToActiveConversion(PlanningInput catalog, CraftingRecipes.Entry producer,
             java.util.Set<ResourceLocation> active) {
         // 复用求解器的精确逆变换定义；默认解释不应重建刚建议拆解的铁块，但不裁剪真实计划或明确选中配方。
@@ -446,6 +471,25 @@ public record PlanView(CraftingResultCode code, boolean workbench, boolean compl
         return !producer.requirements().isEmpty() && producer.output().getCount() <= producer.requirements().size()
                 && producer.requirements().stream().allMatch(r -> r.ingredient().getItems().length > 0
                         && java.util.Arrays.stream(r.ingredient().getItems()).allMatch(demand::test));
+    }
+
+    /** 整批数量一次扣工作表；生产者间共用数量数组，不复制物品栈、不逐批循环或另做搜索。
+     * Deduct whole-batch counts in a reusable quantity table: no stack copies, per-batch loops or extra search. */
+    private static long missingInputs(CraftingRecipes.Entry producer, int deficit, List<ItemStack> stock, int[] remaining) {
+        int batches = Math.toIntExact(((long) deficit + producer.output().getCount() - 1) / producer.output().getCount());
+        for (int i = 0; i < stock.size(); i++) remaining[i] = stock.get(i).getCount();
+        long missing = 0;
+        for (var requirement : producer.requirements()) {
+            int needed = batches;
+            for (int i = 0; i < stock.size() && needed > 0; i++) {
+                if (remaining[i] <= 0 || !requirement.ingredient().test(stock.get(i))) continue;
+                int taken = Math.min(needed, remaining[i]);
+                remaining[i] -= taken;
+                needed -= taken;
+            }
+            missing = Math.addExact(missing, needed);
+        }
+        return missing;
     }
 
     private static List<ItemStack> takeStock(List<ItemStack> stock, net.minecraft.world.item.crafting.Ingredient ingredient, int count) {

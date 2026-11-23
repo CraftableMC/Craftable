@@ -26,6 +26,9 @@ final class ClientPayloadHandler {
     public static void handle(CraftingDetailPayloads.BrowseChunk payload) {
         org.craftablemc.craftable.client.recipebook.ClientBrowsePlanner.receive(payload);
     }
+    static void handle(FurnaceProgressPayload payload, net.minecraft.network.Connection connection) {
+        org.craftablemc.craftable.client.FurnaceProgressOverlay.receive(payload, connection);
+    }
 
     static void handle(CraftingDetailPayloads.PreviewResponse payload) {
         org.craftablemc.craftable.client.CraftingPlanOverlay.receive(payload);

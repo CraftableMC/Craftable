@@ -30,6 +30,7 @@ import org.craftablemc.craftable.network.CraftingDetailPayloads;
 import org.craftablemc.craftable.network.CreateRecipeResultPayload;
 import org.craftablemc.craftable.planner.CraftRequest;
 import org.craftablemc.craftable.planner.PlanView;
+import org.craftablemc.craftable.workstation.WorkstationCapability;
 
 /**
  * 中文：嵌入父菜单的输入/渲染层，不替换 Minecraft 的当前 Screen，也不接管槽位生命周期。
@@ -42,6 +43,8 @@ import org.craftablemc.craftable.planner.PlanView;
  */
 @EventBusSubscriber(modid = Craftable.MOD_ID, value = Dist.CLIENT)
 public final class CraftingPlanOverlay extends Screen {
+    private static final int STATION_X = 20, STATION_Y = 16, STATION_SPACING = 20;
+    private static final ItemStack WATER_BUCKET_PREVIEW = new ItemStack(Items.WATER_BUCKET);
     private static CraftingPlanOverlay current;
     private enum Pane { GRAPH, COSTS, CHOICES }
     private enum Work { PREVIEW, MAXIMUM, CANDIDATE, FALLBACK, AUTHORIZE, CONFIRM }
@@ -176,16 +179,50 @@ public final class CraftingPlanOverlay extends Screen {
         return candidate.output().getHoverName().copy().append(" ×" + candidate.output().getCount());
     }
 
+    private RecipeCardPattern candidatePattern(PlanView.Candidate candidate) {
+        // 同步配方提供图样。选卡仍发送配方 ID 申请服务端整链预览。
+        // The synchronized recipe supplies only the diagram. Choosing its ID still requests authoritative planning.
+        var id = candidate.recipe();
+        var holder = minecraft.level.getRecipeManager().byKey(org.craftablemc.craftable.recipe.CraftingRecipes.nativeRecipeId(id))
+                .orElseGet(() -> org.craftablemc.craftable.recipe.VanillaBrewingRecipe.byId(id));
+        var pattern = RecipeCardPattern.of(holder == null ? null : holder.value(), candidate.gridSize());
+        if (pattern != null && collectsWater(candidate))
+            return new RecipeCardPattern(1, 2, List.of(pattern.ingredients().getFirst(),
+                    net.minecraft.world.item.crafting.Ingredient.of(Items.BUCKET, Items.LAVA_BUCKET)), false,
+                    pattern.cooking(), pattern.station());
+        return pattern;
+    }
+
+    private static boolean collectsWater(PlanView.Candidate candidate) {
+        return org.craftablemc.craftable.recipe.CraftingRecipes.DRY_SPONGE_WITH_WATER.equals(candidate.recipe());
+    }
+
+    private static Component candidateMethod(RecipeCardPattern pattern) {
+        if (pattern == null) return text("candidate_layout_unavailable");
+        var cooking = pattern.cooking();
+        if (pattern.station() != null) {
+            for (var icon : WorkstationIcon.ICONS) if (icon.capability() == pattern.station()) {
+                var name = icon.stack().getHoverName();
+                if (cooking == null) return name;
+                return text(cooking.requiresFuel() ? "candidate_fueled" : "candidate_fuelless", name);
+            }
+            return text("candidate_layout_unavailable");
+        }
+        var grid = pattern.gridSize() == 2 ? text("candidate_inventory_grid")
+                : text("candidate_workbench", Items.CRAFTING_TABLE.getDescription());
+        return pattern.shapeless() ? text("candidate_shapeless", grid) : grid;
+    }
+
     private List<Component> candidateTooltip(PlanView.Candidate candidate) {
         // 中文：GuiGraphics 接收提示行而非多行文档；短提示内嵌 LF 可能直达字形渲染而不触发换行。
         // GuiGraphics accepts tooltip rows, not a multiline document. In-band
         // LF can reach the glyph renderer without wrapping on short tooltips.
         var lines = new ArrayList<Component>();
+        var pattern = candidatePattern(candidate);
         lines.add(candidateLabel(candidate));
-        lines.add(text("candidate_grid", candidate.gridSize(), candidate.gridSize()));
-        minecraft.level.getRecipeManager().byKey(candidate.recipe()).ifPresent(holder -> {
-            lines.addAll(candidateInputLines(holder.value().getIngredients()));
-        });
+        lines.add(candidateMethod(pattern));
+        if (collectsWater(candidate)) lines.add(text("candidate_collect_water"));
+        if (pattern != null) lines.addAll(candidateInputLines(pattern.ingredients()));
         if (candidate.rejection() != null) lines.add(Component.translatable("reason.craftable."
                 + candidate.rejection().name().toLowerCase(java.util.Locale.ROOT)));
         return lines;
@@ -558,6 +595,15 @@ public final class CraftingPlanOverlay extends Screen {
         }
         if (!self.valid() || self.pending != Work.CONFIRM || self.inFlight != payload.requestId()) return;
         self.pending = null;
+        if (payload.resultCode() == CraftingResultCode.FURNACE_QUEUED) {
+            // 服务端已接收加工，尚未交付成品；退出详情让原菜单箭头展示服务端进度，不再自动请求/确认。
+            // Processing was accepted, not delivered; close details for the menu's server progress without another automatic request/confirm.
+            self.notice = Component.translatable("message.craftable.create.furnace_queued");
+            self.clearDisplayedWitness();
+            current = null;
+            ClientBrowsePlanner.cancelDetails();
+            return;
+        }
         self.notice = payload.resultCode() == CraftingResultCode.CREATED || payload.resultCode() == CraftingResultCode.PARTIAL_CREATED
                 ? text("completed") : Component.translatable("message.craftable.create." + payload.resultCode().name().toLowerCase(java.util.Locale.ROOT));
         self.change(self.intent, true);
@@ -641,12 +687,12 @@ public final class CraftingPlanOverlay extends Screen {
     }
 
     @Override public void render(GuiGraphics g, int mx, int my, float partialTick) {
-        super.render(g, mx, my, partialTick);
-        if (pane == Pane.GRAPH && displayedView != null && displayedView.workbench()) {
-            g.renderItem(new ItemStack(Items.CRAFTING_TABLE), 22, 22);
-            if (mx >= 18 && mx < 42 && my >= 18 && my < 42)
-                g.renderTooltip(font, new ItemStack(Items.CRAFTING_TABLE), mx, my);
-        }
+        int stations = pane == Pane.GRAPH ? ClientBrowsePlanner.availableWorkstations() : 0;
+        var hoveredStation = workstationAt(stations, mx, my);
+        super.render(g, hoveredStation == null ? mx : -1, my, partialTick);
+        renderWorkstations(g, stations);
+        if (hoveredStation != null)
+            g.renderTooltip(font, text("workstation_available", hoveredStation.stack().getHoverName()), mx, my);
         if (pane == Pane.COSTS) {
             g.fill(14, 14, width - 14, height - 62, 0xFF353535);
             g.enableScissor(18, 18, width - 18, height - 64);
@@ -675,6 +721,8 @@ public final class CraftingPlanOverlay extends Screen {
         if (draft == null) {
             if (pending == Work.CONFIRM) status = text("waiting");
         }
+        else if (draft.view().code() == CraftingResultCode.FURNACE_QUEUED)
+            status = Component.translatable("message.craftable.create.furnace_queued");
         else if (draft.view().code() == CraftingResultCode.PARTIAL_CREATED)
             status = text("partial_delivery", items(draft.view().primary()));
         else if (draft.view().code() != CraftingResultCode.CREATED && draft.view().code() != CraftingResultCode.PARTIAL_CREATED)
@@ -684,6 +732,37 @@ public final class CraftingPlanOverlay extends Screen {
             g.drawString(font, font.substrByWidth(status, width - 36).getString(), 18, height - 61, 0xFFFFFFFF, false);
         }
         queueEmbeddedTooltip();
+    }
+
+    private void renderWorkstations(GuiGraphics graphics, int available) {
+        int x = STATION_X;
+        for (var icon : WorkstationIcon.ICONS) {
+            if ((available & icon.capability().bit()) == 0) continue;
+            graphics.renderItem(icon.stack(), x, STATION_Y);
+            x += STATION_SPACING;
+        }
+    }
+
+    // 工作站图标浮在画布边缘，紧凑界面也能保有完整的配方图空间。
+    // Keep the full graph area on compact screens by floating these indicators at the canvas edge.
+    private static WorkstationIcon workstationAt(int available, double x, double y) {
+        if (x < STATION_X - 2 || y < STATION_Y - 2 || y >= STATION_Y + 18) return null;
+        int remaining = (int) ((x - (STATION_X - 2)) / STATION_SPACING);
+        for (var icon : WorkstationIcon.ICONS)
+            if ((available & icon.capability().bit()) != 0 && remaining-- == 0) return icon;
+        return null;
+    }
+
+    private record WorkstationIcon(WorkstationCapability capability, ItemStack stack) {
+        static final List<WorkstationIcon> ICONS = List.of(
+                new WorkstationIcon(WorkstationCapability.CRAFTING_3X3, new ItemStack(Items.CRAFTING_TABLE)),
+                new WorkstationIcon(WorkstationCapability.FURNACE, new ItemStack(Items.FURNACE)),
+                new WorkstationIcon(WorkstationCapability.BLAST_FURNACE, new ItemStack(Items.BLAST_FURNACE)),
+                new WorkstationIcon(WorkstationCapability.SMOKER, new ItemStack(Items.SMOKER)),
+                new WorkstationIcon(WorkstationCapability.CAMPFIRE, new ItemStack(Items.CAMPFIRE)),
+                new WorkstationIcon(WorkstationCapability.STONECUTTER, new ItemStack(Items.STONECUTTER)),
+                new WorkstationIcon(WorkstationCapability.SMITHING_TABLE, new ItemStack(Items.SMITHING_TABLE)),
+                new WorkstationIcon(WorkstationCapability.BREWING_STAND, new ItemStack(Items.BREWING_STAND)));
     }
 
     private void queueEmbeddedTooltip() {
@@ -710,47 +789,54 @@ public final class CraftingPlanOverlay extends Screen {
             drawChoiceLabel(g, draft == null ? text("waiting") : text("none"), cx, cy + 20);
             return;
         }
-        drawChoiceLabel(g, candidate.output().getHoverName(), cx, cy - 4);
-        var holder = minecraft.level.getRecipeManager().byKey(candidate.recipe()).orElse(null);
-        // 中文：客户端同步配方仅供展示；选卡仍发送配方 ID 申请服务端完整链预览。
-        // Client-synchronized recipes are display data only. Choosing a card
-        // still sends a recipe ID for an authoritative full-chain preview.
-        if (holder != null) {
-            var ingredients = holder.value().getIngredients();
-            int gridWidth = holder.value() instanceof net.minecraft.world.item.crafting.ShapedRecipe shaped ? shaped.getWidth() : 3;
+        var output = candidate.output();
+        var pattern = candidatePattern(candidate);
+        drawChoiceLabel(g, collectsWater(candidate) ? text("candidate_collect_water") : output.getHoverName(), cx, cy - 4);
+        drawChoiceLabel(g, candidateMethod(pattern), cx, cy + 7);
+        int outputX = pattern == null ? cx - 9 : cx + 32;
+        int outputY = cy + 34;
+        if (pattern != null) {
+            int size = pattern.gridSize();
+            int columns = size == 1 ? pattern.sourceWidth() : size;
+            int inputX = size == 1 ? cx - 50 - (columns - 1) * 9 : cx - 70;
+            int inputY = size == 1 ? cy + 34 : cy + 17;
             long frame = minecraft.level.getGameTime() / 30;
-            for (int slot = 0; slot < 9; slot++) {
-                int x = cx - 70 + slot % 3 * 18, y = cy + 17 + slot / 3 * 18;
+            for (int slot = 0; slot < columns * size; slot++) {
+                int column = slot % columns, row = slot / columns;
+                int x = inputX + column * 18, y = inputY + row * 18;
                 g.blit(ResourceLocation.withDefaultNamespace("textures/gui/container/crafting_table.png"), x, y, 29, 16, 18, 18);
-                int index = slot / 3 * gridWidth + slot % 3;
-                if (slot % 3 >= gridWidth || index >= ingredients.size()) continue;
-                var options = ingredients.get(index).getItems();
+                var options = pattern.ingredient(column, row).getItems();
                 if (options.length == 0) continue;
                 var stack = options[(int) (frame % options.length)];
                 g.renderItem(stack, x + 1, y + 1);
                 if (mx >= x && mx < x + 18 && my >= y && my < y + 18) hoveredIngredient = stack;
             }
+            g.blit(ResourceLocation.withDefaultNamespace("textures/gui/container/crafting_table.png"), cx - 6, cy + 33, 89, 35, 24, 17);
         }
-        g.blit(ResourceLocation.withDefaultNamespace("textures/gui/container/crafting_table.png"), cx - 6, cy + 33, 89, 35, 24, 17);
-        g.blit(ResourceLocation.withDefaultNamespace("textures/gui/container/inventory.png"), cx + 32, cy + 34, 153, 27, 18, 18);
-        g.renderItem(candidate.output(), cx + 33, cy + 35);
-        g.renderItemDecorations(font, candidate.output(), cx + 33, cy + 35);
+        g.blit(ResourceLocation.withDefaultNamespace("textures/gui/container/inventory.png"), outputX, outputY, 153, 27, 18, 18);
+        g.renderItem(output, outputX + 1, outputY + 1);
+        g.renderItemDecorations(font, output, outputX + 1, outputY + 1);
+        if (collectsWater(candidate)) g.renderItem(WATER_BUCKET_PREVIEW, outputX + 20, outputY + 1);
         drawChoiceLabel(g, Component.literal((choicePage + 1) + " / " + draft.choices().candidates().size()
                 + (draft.choices().truncated() ? " +" : "")), cx, cy + 70);
-        var state = candidateStates.get(candidate.recipe());
+        var state = candidateStates.getOrDefault(candidate.recipe(), candidate.rejection());
         String marker = state == null || state == CraftingResultCode.SEARCH_BUDGET_EXCEEDED ? "?"
                 : state == CraftingResultCode.CREATED ? "+" : state == CraftingResultCode.PARTIAL_CREATED ? "!" : "×";
-        g.drawString(font, marker, cx + 57, cy + 39, state == CraftingResultCode.CREATED ? 0xFF208020 : 0xFF803030, false);
+        g.drawString(font, marker, outputX + (collectsWater(candidate) ? 42 : 25), outputY + 5,
+                state == CraftingResultCode.CREATED ? 0xFF208020 : 0xFF803030, false);
         // 中文：全部槽位/物品绘完后再画提示，避免后续纹理覆盖较早槽位的提示。
         // Draw tooltips only after every slot/item. Later texture blits otherwise
         // cover parts of the tooltip even though it was requested for an earlier slot.
         if (!hoveredIngredient.isEmpty()) g.renderTooltip(font, hoveredIngredient, mx, my);
-        if (mx >= cx + 30 && mx < cx + 76 && my >= cy + 30 && my < cy + 60 || applyChoice.isHoveredOrFocused())
+        else if (mx >= outputX - 2 && mx < outputX + 44 && my >= outputY - 4 && my < outputY + 26
+                || applyChoice.isHoveredOrFocused())
             g.renderComponentTooltip(font, candidateTooltip(candidate), mx, my);
     }
 
     private void drawChoiceLabel(GuiGraphics g, Component label, int centerX, int y) {
-        g.drawString(font, label, centerX - font.width(label) / 2, y, 0xFF404040, false);
+        var fit = font.substrByWidth(label, Math.max(0, width - 40));
+        var visual = net.minecraft.locale.Language.getInstance().getVisualOrder(fit);
+        g.drawString(font, visual, centerX - font.width(visual) / 2, y, 0xFF404040, false);
     }
 
     /** 中文：画布上的小型刷新入口，不与主操作竞争；用线条绘制符号，因原版字体不保证含 ↻。
@@ -810,6 +896,7 @@ public final class CraftingPlanOverlay extends Screen {
             if (refresh.mouseClicked(x, y, button)) setFocused(refresh);
             return true;
         }
+        if (pane == Pane.GRAPH && workstationAt(ClientBrowsePlanner.availableWorkstations(), x, y) != null) return true;
         return super.mouseClicked(x, y, button);
     }
 

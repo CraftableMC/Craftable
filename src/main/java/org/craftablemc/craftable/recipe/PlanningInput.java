@@ -18,14 +18,22 @@ import org.craftablemc.craftable.config.DirectPreparationPolicy;
 public final class PlanningInput {
     private final CraftingRecipes.Index index;
     private final boolean workbench, limited;
+    private final int furnaceMask, maxFurnaceBatches;
     private final Set<ResourceLocation> unlocked;
     private final DirectPreparationPolicy directPreparation;
 
     PlanningInput(CraftingRecipes.Index index, boolean workbench, boolean limited, Set<ResourceLocation> unlocked,
             DirectPreparationPolicy directPreparation) {
+        this(index, workbench, limited, unlocked, directPreparation, 0, 64);
+    }
+
+    PlanningInput(CraftingRecipes.Index index, boolean workbench, boolean limited, Set<ResourceLocation> unlocked,
+            DirectPreparationPolicy directPreparation, int furnaceMask, int maxFurnaceBatches) {
         this.index = index;
         this.workbench = workbench;
         this.limited = limited;
+        this.furnaceMask = furnaceMask;
+        this.maxFurnaceBatches = maxFurnaceBatches;
         this.unlocked = Set.copyOf(unlocked);
         this.directPreparation = java.util.Objects.requireNonNull(directPreparation, "directPreparation");
     }
@@ -89,8 +97,13 @@ public final class PlanningInput {
          * dynamic restrictions never enter the shared static index. */
         public PlanningInput bind(boolean workbench, boolean limited, Set<ResourceLocation> unlocked,
                 DirectPreparationPolicy directPreparation) {
+            return bind(workbench, limited, unlocked, directPreparation, 0, 64);
+        }
+
+        public PlanningInput bind(boolean workbench, boolean limited, Set<ResourceLocation> unlocked,
+                DirectPreparationPolicy directPreparation, int furnaceMask, int maxFurnaceBatches) {
             if (state != State.READY) throw new IllegalStateException("Catalog is not ready");
-            return new PlanningInput(index, workbench, limited, unlocked, directPreparation);
+            return new PlanningInput(index, workbench, limited, unlocked, directPreparation, furnaceMask, maxFurnaceBatches);
         }
 
         public State state() { return state; }
@@ -115,9 +128,10 @@ public final class PlanningInput {
     public PlanningInput restrict(org.craftablemc.craftable.planner.CraftRequest.PartialPolicy preference) {
         var restricted = directPreparation.restrict(preference);
         return restricted == directPreparation ? this
-                : new PlanningInput(index, workbench, limited, unlocked, restricted);
+                : new PlanningInput(index, workbench, limited, unlocked, restricted, furnaceMask, maxFurnaceBatches);
     }
     public List<CraftingRecipes.Entry> entries() { return index.valueOrdered; }
+    public List<CraftingRecipes.Entry> reachableEntries() { return index.reachableEntries(furnaceMask); }
     public List<CraftingRecipes.Entry> producing(Ingredient ingredient) {
         return index.producing(ingredient).stream().filter(e -> index.valueRecipes.contains(e.id())).toList();
     }
@@ -128,8 +142,44 @@ public final class PlanningInput {
     public String fingerprint() { return index.planningFingerprint; }
     public boolean fullySupported() { return index.valueRecipes.size() == index.ordered.size(); }
     public boolean workbench() { return workbench; }
+    public int maxFurnaceBatches() { return maxFurnaceBatches; }
+    public Ingredient fuels(FurnaceRecipe furnace) { return index.fuels.get(furnace.station()).options(); }
+    public int fuelTicks(FurnaceRecipe furnace, ItemStack stack) {
+        var fuel = index.fuels.get(furnace.station()).values().get(stack.getItem());
+        return fuel == null ? 0 : fuel.ticks();
+    }
     public boolean allowDirectPreparation(CraftingRecipes.Entry entry) {
         return entry != null && directPreparation.allowsWithoutConfirmation(entry.id());
+    }
+
+    /** 普通单件产出且无返还物时，若已经需要一件当前需求接受的原料，直接使用该原料就能满足需求。
+     * For a one-item ordinary producer without remainders, an input that always satisfies the current demand can supply it directly. */
+    public boolean cannotImproveDemand(CraftingRecipes.Entry producer, Ingredient demand, CraftingRecipes.Entry consumer) {
+        if (!isSingleWithoutRemainders(producer) || demand.isCustom()) return false;
+        // 相邻的单件无返还转换也不能先拆掉消费者的成品，再消耗额外材料把它做回来。
+        // A pair of single-output, remainder-free steps cannot improve stock by first consuming the consumer's own result.
+        var consumerOutput = isSingleWithoutRemainders(consumer) ? consumer.output() : ItemStack.EMPTY;
+        for (var requirement : producer.requirements()) {
+            var options = requirement.ingredient().getItems();
+            if (options.length > 0 && java.util.Arrays.stream(options).allMatch(option -> demand.test(option)
+                    || !consumerOutput.isEmpty() && ItemStack.isSameItemSameComponents(option, consumerOutput))) return true;
+        }
+        return false;
+    }
+
+    private boolean isSingleWithoutRemainders(CraftingRecipes.Entry entry) {
+        return entry.station() == null && entry.output().getCount() == 1
+                && index.valueRecipes.contains(entry.id()) && !index.returningRecipes.contains(entry.id());
+    }
+
+    /** 铁粒和金粒的装备回收使用已在账本中的装备，避免为了回收而现造一件新装备。
+     * Iron and gold equipment recycling draws from stock already in the ledger instead of manufacturing gear for scrap. */
+    public boolean requiresExistingProcessingInput(CraftingRecipes.Entry producer) {
+        if (producer.furnace() == null) return false;
+        var output = producer.output();
+        if (!output.is(net.minecraft.world.item.Items.IRON_NUGGET) && !output.is(net.minecraft.world.item.Items.GOLD_NUGGET)) return false;
+        var options = producer.requirements().getFirst().ingredient().getItems();
+        return options.length > 0 && java.util.Arrays.stream(options).allMatch(stack -> stack.getMaxStackSize() == 1);
     }
 
     /** 仅为保守调度提示；其他输入返还的桶不得移至返还操作之前。未知行为禁用提示，不能证明不存在。
@@ -147,6 +197,22 @@ public final class PlanningInput {
      * returned containers as well as the main output; neither implies that
      * enough material exists or that this recipe may execute. */
     public boolean addReachableOutputs(CraftingRecipes.Entry entry, Set<net.minecraft.world.item.Item> reachable) {
+        if (entry.station() != null && (furnaceMask & entry.station().bit()) == 0) return false;
+        if (entry.furnace() != null) {
+            // 忽略热量的存在性松弛仍需把可产生的燃料容器算入候选。
+            // Heat is relaxed here, but fuel containers must remain reachable candidates.
+            if (entry.requirements().stream().noneMatch(requirement ->
+                    java.util.Arrays.stream(requirement.ingredient().getItems()).anyMatch(item -> reachable.contains(item.getItem()))))
+                return false;
+            boolean changed = reachable.add(entry.output().getItem());
+            if (index.returningRecipes.contains(entry.id()))
+                for (var remainder : entry.processingRemainders()) changed |= reachable.add(remainder.getItem());
+            if (!entry.furnace().requiresFuel()) return changed;
+            var options = index.fuels.get(entry.furnace().station()).returning();
+            for (var fuel : options)
+                if (reachable.contains(fuel.getKey())) changed |= reachable.add(fuel.getValue().remainder().getItem());
+            return changed;
+        }
         if (reachable.contains(entry.output().getItem()) && !index.returningRecipes.contains(entry.id())) return false;
         for (var requirement : entry.requirements()) {
             boolean any = false;
@@ -173,6 +239,7 @@ public final class PlanningInput {
      * equivalent and must keep their normal bounded search semantics. */
     public boolean isExactInverse(CraftingRecipes.Entry first, CraftingRecipes.Entry second) {
         return first != null && second != null
+                && first.station() == null && second.station() == null
                 && index.valueRecipes.contains(first.id()) && index.valueRecipes.contains(second.id())
                 && homogeneousInputs(first, second.output()) && homogeneousInputs(second, first.output());
     }
@@ -191,6 +258,8 @@ public final class PlanningInput {
     public CraftingResultCode unavailable(CraftingRecipes.Entry entry) {
         if (entry == null || !index.valueRecipes.contains(entry.id())) return CraftingResultCode.UNSUPPORTED_RECIPE;
         if (limited && !unlocked.contains(entry.id())) return CraftingResultCode.RECIPE_LOCKED;
+        if (entry.station() != null && (furnaceMask & entry.station().bit()) == 0)
+            return CraftingResultCode.MISSING_WORKSTATION;
         if (entry.gridSize() == 3 && !workbench) return CraftingResultCode.MISSING_WORKSTATION;
         return null;
     }
@@ -199,6 +268,16 @@ public final class PlanningInput {
      * Assemble only a supported canonical grid into copied step values; this pure model consistency
      * check never replaces live server recipe revalidation. */
     public CraftPlan.Step assemble(CraftingRecipes.Entry entry, String path, List<ItemStack> grid) {
+        if (entry.station() != null) {
+            if (unavailable(entry) != null || !entry.validProcessingInputs(grid)) return null;
+            var remainders = entry.processingRemainders();
+            for (int i = entry.inputSlots(); i < grid.size(); i++) {
+                var fuel = index.fuels.get(entry.station()).values().get(grid.get(i).getItem());
+                if (fuel == null) return null;
+                if (!fuel.remainder().isEmpty()) remainders.add(fuel.remainder());
+            }
+            return new CraftPlan.Step(entry.holder(), path, 1, grid, entry.output(), remainders);
+        }
         if (unavailable(entry) != null || grid.size() != entry.gridSize() * entry.gridSize()) return null;
         // 搜索始终绑定规范配方网格；镜像/玩家网格属于服务端匹配职责，不在本地再造配方匹配器。
         // Search always binds a recipe's canonical grid. Mirrored/player grids

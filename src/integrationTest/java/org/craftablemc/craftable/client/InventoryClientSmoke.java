@@ -3,8 +3,11 @@ package org.craftablemc.craftable.client;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Screenshot;
 import net.minecraft.client.gui.screens.TitleScreen;
+import net.minecraft.client.gui.screens.inventory.CraftingScreen;
 import net.minecraft.client.gui.screens.inventory.InventoryScreen;
+import net.minecraft.client.gui.screens.recipebook.GhostRecipe;
 import net.minecraft.client.gui.screens.recipebook.RecipeButton;
+import net.minecraft.client.gui.screens.recipebook.RecipeBookComponent;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceLocation;
@@ -25,9 +28,12 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.RenderFrameEvent;
+import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.neoforged.neoforge.client.event.ToastAddEvent;
+import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.craftablemc.craftable.Craftable;
+import org.craftablemc.craftable.client.recipebook.ClientBrowsePlanner;
 import org.craftablemc.craftable.api.CraftingStatus;
 import org.craftablemc.craftable.client.menu.AmbientInventoryScreen;
 import org.craftablemc.craftable.client.mixin.RecipeBookComponentAccessor;
@@ -48,9 +54,12 @@ public final class InventoryClientSmoke {
         VERIFY_REPEAT_CRAFT_AND_FILTER,
         OPEN_NO_TABLE_INVENTORY,
         VERIFY_MISSING_WORKSTATION,
+        VERIFY_NO_TABLE_DETAILS,
         STRESS_RECIPE_BOOK,
         OPEN_WORKBENCH,
         SETUP_WORKBENCH_BOOK,
+        SELECT_WORKBENCH_GHOST,
+        VERIFY_WORKBENCH_GHOST,
         VERIFY_WORKBENCH_PREVIEW,
         VERIFY_WORKBENCH_CREATE,
         SWITCH_TO_CREATIVE,
@@ -71,6 +80,8 @@ public final class InventoryClientSmoke {
         VERIFY_MENU_MOVES,
         VERIFY_LATE_CONFIRMATION,
         VERIFY_FEEDBACK_TOAST,
+        VERIFY_FURNACE_PROGRESS,
+        VERIFY_PROCESSING_STATIONS,
         PASSED,
         FAILED
     }
@@ -81,10 +92,13 @@ public final class InventoryClientSmoke {
     private static volatile String firstCreateOutcome;
     private static long quietSequence;
     private static long previewStart;
+    private static int prewarmedCatalogBuilds;
     private static final RepeatCraftScenario repeatCraft = new RepeatCraftScenario();
     private static final MenuMoveScenario menuMoves = new MenuMoveScenario();
     private static final LateConfirmationScenario lateConfirmation = new LateConfirmationScenario();
     private static final FeedbackToastScenario feedbackToast = new FeedbackToastScenario();
+    private static final FurnaceProgressScenario furnaceProgress = new FurnaceProgressScenario();
+    private static final ProcessingStationScenario processingStations = new ProcessingStationScenario();
     private static boolean wideEffectsRendered, compactEffectsRendered;
     private static int savedScale = -1;
     private static boolean savedPauseOnLostFocus;
@@ -92,6 +106,7 @@ public final class InventoryClientSmoke {
     private static final BlockPos TABLE = new BlockPos(2, -60, 0);
     private static final BlockPos CHEST = new BlockPos(1, -60, 1);
     private static final ResourceLocation STICK = ResourceLocation.withDefaultNamespace("stick");
+    private static final ResourceLocation DIAMOND_SWORD = ResourceLocation.withDefaultNamespace("diamond_sword");
 
     @SubscribeEvent
     public static void tick(ClientTickEvent.Post event) {
@@ -135,6 +150,11 @@ public final class InventoryClientSmoke {
                 });
                 advance(Step.OPEN_INVENTORY);
             } else if (step == Step.OPEN_INVENTORY && configured && age > 60) {
+                // 中文：检查真实进世界后的目录。首次打开背包前只有静态知识，尚无动态浏览授权。
+                // Check the live join path: only static knowledge exists before the first inventory screen.
+                require(mc.screen == null && ClientBrowsePlanner.catalogReady() && !ClientBrowsePlanner.ready(),
+                        "Static recipe catalog was not ready in the world before opening inventory, or already granted browse access");
+                prewarmedCatalogBuilds = ClientBrowsePlanner.catalogBuilds();
                 mc.player.getRecipeBook().setOpen(RecipeBookType.CRAFTING, true);
                 mc.player.getRecipeBook().setFiltering(RecipeBookType.CRAFTING, false);
                 // 中文：使用真实原版配方书开关；仅改客户端标志会被首个解锁包的服务端设置覆盖，折叠页面并合法停止需求。
@@ -159,6 +179,8 @@ public final class InventoryClientSmoke {
                 require(RecipeButtonTargetResolver.status(button) == CraftingStatus.CRAFTABLE, "Chest-only stick not craftable");
                 require(button.getCollection().hasCraftable(), "Vanilla collection not craftable");
                 require(RecipeButtonTargetResolver.preferredRecipe(button).id().equals(STICK), "Wrong recipe variant selected");
+                require(ClientBrowsePlanner.catalogBuilds() == prewarmedCatalogBuilds,
+                        "The first browse lease rebuilt the prewarmed recipe catalog");
                 Screenshot.grab(mc.gameDirectory, "inventory-smoke-craftable.png", mc.getMainRenderTarget(), ignored -> {});
                 PacketDistributor.sendToServer(new CreateRecipeRequestPayload(STICK, ClientRequestSequence.next(), -1, true, org.craftablemc.craftable.planner.CraftRequest.PartialPolicy.EXPLICIT_SAFE));
                 advance(Step.VERIFY_FIRST_CREATE);
@@ -216,10 +238,22 @@ public final class InventoryClientSmoke {
                         net.minecraft.network.chat.Component.translatable("reason.craftable.missing_workstation")).getString();
                 require(button.getTooltipText().stream().filter(line -> line.getString().equals(concise)).count() == 1,
                         "Missing single-line status/reason tooltip");
-                // 中文：实际 2x2 菜单显示 3x3 ALL 时走真实左键保护路径，检查错误拓扑不会被放置。
-                // Exercise the guarded left-click path while 3x3 ALL is shown on 2x2.
-                mc.screen.mouseClicked(button.getX() + 5, button.getY() + 5, 0);
+                // 实际 2x2 菜单的 3x3 配方左键打开详情，避免错位的虚影。
+                // Left-click a 3x3 recipe through the actual 2x2 menu to check that it opens details.
+                require(mc.screen.mouseClicked(button.getX() + 5, button.getY() + 5, 0) && CraftingPlanOverlay.active(),
+                        "A 3x3 recipe clicked in 2x2 did not open details");
+                advance(Step.VERIFY_NO_TABLE_DETAILS);
+            } else if (step == Step.VERIFY_NO_TABLE_DETAILS && age > 5) {
+                require(CraftingPlanOverlay.active() && mc.player.containerMenu == mc.player.inventoryMenu,
+                        "3x3 detail did not stay on its original 2x2 menu");
+                require(ghostRecipe(RecipeBookProjection.component(mc.screen)).getRecipe() == null,
+                        "3x3 detail installed a ghost in the 2x2 grid");
+                require(mc.player.inventoryMenu.slots.subList(0, 5).stream().allMatch(slot -> slot.getItem().isEmpty()),
+                        "Read-only detail changed the 2x2 grid");
                 Screenshot.grab(mc.gameDirectory, "inventory-smoke-no-table.png", mc.getMainRenderTarget(), ignored -> {});
+                closeDetails(mc);
+                var book = RecipeBookProjection.component(mc.screen);
+                if (!book.isVisible()) book.toggleVisibility();
                 advance(Step.STRESS_RECIPE_BOOK);
             } else if (step == Step.STRESS_RECIPE_BOOK) {
                 stressRecipeBook(mc);
@@ -233,9 +267,35 @@ public final class InventoryClientSmoke {
                     player.openMenu(Blocks.CRAFTING_TABLE.defaultBlockState().getMenuProvider(level, TABLE));
                 });
                 advance(Step.SETUP_WORKBENCH_BOOK);
-            } else if (step == Step.SETUP_WORKBENCH_BOOK && mc.screen instanceof net.minecraft.client.gui.screens.inventory.CraftingScreen screen) {
+            } else if (step == Step.SETUP_WORKBENCH_BOOK && mc.screen instanceof CraftingScreen screen) {
+                var book = screen.getRecipeBookComponent();
+                var sword = mc.level.getRecipeManager().byKey(DIAMOND_SWORD).orElseThrow();
+                require(!mc.player.getRecipeBook().contains(sword), "Locked-recipe fallback fixture started with a learned sword");
+                var button = searchSword(book);
+                require(screen.mouseClicked(button.getX() + 5, button.getY() + 5, 0) && CraftingPlanOverlay.active(),
+                        "An unlearned fitting recipe did not open details");
+                require(ghostRecipe(book).getRecipe() == null, "An unlearned recipe placed a native ghost");
+                closeDetails(mc);
+                mc.getSingleplayerServer().execute(() -> {
+                    var player = serverPlayer();
+                    player.awardRecipes(java.util.List.of(player.serverLevel().getRecipeManager().byKey(DIAMOND_SWORD).orElseThrow()));
+                });
+                advance(Step.SELECT_WORKBENCH_GHOST);
+            } else if (step == Step.SELECT_WORKBENCH_GHOST && mc.screen instanceof CraftingScreen screen) {
+                var sword = mc.level.getRecipeManager().byKey(DIAMOND_SWORD).orElseThrow();
+                if (!mc.player.getRecipeBook().contains(sword)) return;
+                // 同一配方解锁后，真正的原版放置请求应返回合成格虚影。
+                // Once learned, the same recipe should get a ghost through the actual vanilla placement request.
+                var button = searchSword(screen.getRecipeBookComponent());
+                require(screen.mouseClicked(button.getX() + 5, button.getY() + 5, 0) && !CraftingPlanOverlay.active(),
+                        "A learned fitting recipe left the native ghost path");
+                advance(Step.VERIFY_WORKBENCH_GHOST);
+            } else if (step == Step.VERIFY_WORKBENCH_GHOST && mc.screen instanceof CraftingScreen screen) {
+                var ghost = ghostRecipe(screen.getRecipeBookComponent());
+                if (ghost.getRecipe() == null) return;
+                require(ghost.getRecipe().id().equals(DIAMOND_SWORD) && ghost.size() > 1,
+                        "The workbench did not get the selected sword ghost pattern");
                 searchSticks(screen.getRecipeBookComponent());
-                showSwordGhost(screen.getRecipeBookComponent());
                 advance(Step.VERIFY_WORKBENCH_PREVIEW);
             } else if (step == Step.VERIFY_WORKBENCH_PREVIEW && age > 60) {
                 require(button().getCollection().hasCraftable(), "Physical workbench did not receive enhanced chest state");
@@ -362,7 +422,13 @@ public final class InventoryClientSmoke {
                 advance(Step.VERIFY_FEEDBACK_TOAST);
             } else if (step == Step.VERIFY_FEEDBACK_TOAST) {
                 if (!feedbackToast.tick(mc)) return;
-                Craftable.LOGGER.warn("INVENTORY_SMOKE PASS: inventory layout and sword ghost, chest preview/filter/create, 200 ticks tab/index stress, physical workbench ghost, repeated creative E without requests, mode-switch returns, spectator isolation, explicit survival/adventure reopen, native wide/compact effects and HUD return, and failure toast reuse");
+                advance(Step.VERIFY_FURNACE_PROGRESS);
+            } else if (step == Step.VERIFY_FURNACE_PROGRESS) {
+                if (!furnaceProgress.tick(mc)) return;
+                advance(Step.VERIFY_PROCESSING_STATIONS);
+            } else if (step == Step.VERIFY_PROCESSING_STATIONS) {
+                if (!processingStations.tick(mc)) return;
+                Craftable.LOGGER.warn("INVENTORY_SMOKE PASS: inventory layout and sword ghost, chest preview/filter/create, 200 ticks tab/index stress, physical workbench ghost, repeated creative E without requests, mode-switch returns, spectator isolation, explicit survival/adventure reopen, native wide/compact effects and HUD return, failure toast reuse, furnace progress/delivery, and native workstation browsing and brewing");
                 ClientTestRun.pass();
                 step = Step.PASSED;
                 mc.options.pauseOnLostFocus = savedPauseOnLostFocus;
@@ -370,6 +436,8 @@ public final class InventoryClientSmoke {
             }
         } catch (Throwable failure) {
             try { lateConfirmation.close(); } catch (Throwable cleanup) { failure.addSuppressed(cleanup); }
+            try { furnaceProgress.close(); } catch (Throwable cleanup) { failure.addSuppressed(cleanup); }
+            try { processingStations.close(mc); } catch (Throwable cleanup) { failure.addSuppressed(cleanup); }
             if (savedScale >= 0) mc.options.guiScale().set(savedScale);
             if (started) mc.options.pauseOnLostFocus = savedPauseOnLostFocus;
             ClientTestRun.fail();
@@ -390,24 +458,44 @@ public final class InventoryClientSmoke {
     }
     @SubscribeEvent public static void frameRendered(RenderFrameEvent.Post event) {
         if (step == Step.VERIFY_FEEDBACK_TOAST && !Minecraft.getInstance().options.hideGui) feedbackToast.rendered();
+        if (step == Step.VERIFY_FURNACE_PROGRESS && !Minecraft.getInstance().options.hideGui) furnaceProgress.rendered();
     }
     private static void advance(Step next) {
         step = next;
         age = 0;
         Craftable.LOGGER.warn("INVENTORY_SMOKE step {}", step);
     }
-    private static void showSwordGhost(net.minecraft.client.gui.screens.recipebook.RecipeBookComponent book) {
+    private static void showSwordGhost(RecipeBookComponent book) {
         var mc = Minecraft.getInstance();
         // 中文：夹具仅用于渲染，不放置合成配方或修改库存。
         // Rendering-only fixture; no crafting placement or inventory mutation.
         book.setupGhostRecipe(mc.level.getRecipeManager()
-                .byKey(ResourceLocation.withDefaultNamespace("diamond_sword")).orElseThrow(), mc.player.containerMenu.slots);
+                .byKey(DIAMOND_SWORD).orElseThrow(), mc.player.containerMenu.slots);
+    }
+    private static RecipeButton searchSword(RecipeBookComponent book) {
+        if (!book.isVisible()) book.toggleVisibility();
+        Minecraft.getInstance().player.getRecipeBook().setFiltering(RecipeBookType.CRAFTING, false);
+        ((RecipeBookComponentAccessor) book).craftable$getSearchBox().setValue(Items.DIAMOND_SWORD.getDescription().getString());
+        book.recipesUpdated();
+        var button = button();
+        require(button.getRecipe() != null && button.getRecipe().id().equals(DIAMOND_SWORD), "Diamond sword recipe was not visible");
+        return button;
+    }
+    private static GhostRecipe ghostRecipe(RecipeBookComponent book) throws ReflectiveOperationException {
+        var field = RecipeBookComponent.class.getDeclaredField("ghostRecipe");
+        field.setAccessible(true);
+        return (GhostRecipe) field.get(book);
+    }
+    private static void closeDetails(Minecraft mc) {
+        var escape = new ScreenEvent.KeyPressed.Pre(mc.screen, org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE, 0, 0);
+        NeoForge.EVENT_BUS.post(escape);
+        require(escape.isCanceled() && !CraftingPlanOverlay.active(), "Details did not close back to the original menu");
     }
     private static net.minecraft.server.level.ServerPlayer serverPlayer() {
         var mc = Minecraft.getInstance();
         return mc.getSingleplayerServer().getPlayerList().getPlayer(mc.player.getUUID());
     }
-    private static void searchSticks(net.minecraft.client.gui.screens.recipebook.RecipeBookComponent book) {
+    private static void searchSticks(RecipeBookComponent book) {
         if (!book.isVisible()) book.toggleVisibility();
         Minecraft.getInstance().player.getRecipeBook().setFiltering(RecipeBookType.CRAFTING, false);
         ((RecipeBookComponentAccessor) book).craftable$getSearchBox().setValue(Items.STICK.getDescription().getString());

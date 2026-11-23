@@ -24,6 +24,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.item.crafting.CraftingInput;
 import net.minecraft.world.item.crafting.CraftingRecipe;
 import net.minecraft.world.item.crafting.Ingredient;
@@ -31,12 +32,15 @@ import net.minecraft.world.item.crafting.RecipeHolder;
 import net.minecraft.world.item.crafting.Recipe;
 import net.minecraft.world.item.crafting.RecipeSerializer;
 import net.minecraft.world.item.crafting.ShapedRecipe;
+import net.minecraft.world.item.crafting.AbstractCookingRecipe;
+import net.minecraft.world.item.crafting.SingleRecipeInput;
 import net.minecraft.world.level.GameRules;
 import net.neoforged.neoforge.common.CommonHooks;
 import org.craftablemc.craftable.api.CraftingResultCode;
 import org.craftablemc.craftable.planner.CraftPlan;
 import org.craftablemc.craftable.config.DirectPreparationPolicy;
 import org.craftablemc.craftable.config.CraftableServerConfig;
+import org.craftablemc.craftable.workstation.WorkstationCapability;
 
 /** 普通原版配方边界；每个索引归所属游戏线程，执行与合成钩子只在服务端线程运行。
  * 静态索引不存玩家权限或材料结论；每个实例仅冻结本次操作的访问/确认规则，不授予提交权。
@@ -47,9 +51,12 @@ import org.craftablemc.craftable.config.CraftableServerConfig;
  */
 @EventBusSubscriber(modid = Craftable.MOD_ID)
 public final class CraftingRecipes {
+    public static final ResourceLocation DRY_SPONGE = ResourceLocation.withDefaultNamespace("sponge");
+    public static final ResourceLocation DRY_SPONGE_WITH_WATER = ResourceLocation.fromNamespaceAndPath(Craftable.MOD_ID, "sponge_with_water");
     private static final Map<MinecraftServer, Index> INDEXES = new IdentityHashMap<>();
     private final ServerPlayer player;
     private final boolean workbench;
+    private final int furnaceMask, maxFurnaceBatches;
     private final Set<ResourceLocation> unlocked;
     private final boolean limited;
     private final Index index;
@@ -60,8 +67,15 @@ public final class CraftingRecipes {
     }
 
     public CraftingRecipes(ServerPlayer player, boolean workbench, DirectPreparationPolicy directPreparation) {
+        this(player, workbench, directPreparation, 0, 64);
+    }
+
+    public CraftingRecipes(ServerPlayer player, boolean workbench, DirectPreparationPolicy directPreparation,
+            int furnaceMask, int maxFurnaceBatches) {
         this.player = player;
         this.workbench = workbench;
+        this.furnaceMask = furnaceMask;
+        this.maxFurnaceBatches = maxFurnaceBatches;
         this.directPreparation = java.util.Objects.requireNonNull(directPreparation, "directPreparation");
         this.limited = player.serverLevel().getGameRules().getBoolean(GameRules.RULE_LIMITED_CRAFTING);
         var server = player.getServer();
@@ -79,7 +93,9 @@ public final class CraftingRecipes {
         this.unlocked = new java.util.HashSet<>();
         if (limited) {
             for (var entry : index.byId.values()) {
-                if (player.getRecipeBook().contains(entry.holder())) unlocked.add(entry.id());
+                if (entry.holder().value() instanceof VanillaBrewingRecipe || player.getRecipeBook().contains(
+                        entry.collectsWater() ? new RecipeHolder<>(DRY_SPONGE, entry.holder().value()) : entry.holder()))
+                    unlocked.add(entry.id());
             }
         }
     }
@@ -159,13 +175,16 @@ public final class CraftingRecipes {
         var current = INDEXES.get(server);
         return current == generation && current != null && current.identity == server.getRecipeManager().getRecipes();
     }
-    public Object accessIdentity() { return List.of(index, workbench, limited, Set.copyOf(unlocked)); }
+    public Object accessIdentity() { return List.of(index, workbench, furnaceMask, maxFurnaceBatches, limited, Set.copyOf(unlocked)); }
     public boolean workbench() { return workbench; }
+    public int furnaceMask() { return furnaceMask; }
     public boolean limitedCrafting() { return limited; }
     public Set<ResourceLocation> unlockedRecipes() { return Set.copyOf(unlocked); }
     public Entry find(ResourceLocation id) { return index.byId.get(id); }
     public List<Entry> entries() { return index.ordered; }
-    public PlanningInput planningInput() { return new PlanningInput(index, workbench, limited, unlocked, directPreparation); }
+    public PlanningInput planningInput() {
+        return new PlanningInput(index, workbench, limited, unlocked, directPreparation, furnaceMask, maxFurnaceBatches);
+    }
     public boolean allowDirectPreparation(Entry entry) {
         return entry != null && directPreparation.allowsWithoutConfirmation(entry.id());
     }
@@ -174,12 +193,35 @@ public final class CraftingRecipes {
      * Validate the chosen route against live authoritative behavior, never
      * search an alternative here. The pure model cannot authorize execution. */
     public boolean validate(CraftPlan plan) {
+        var heat = new java.util.EnumMap<WorkstationCapability, Integer>(WorkstationCapability.class);
+        int cookingBatches = 0;
         for (var step : plan.steps()) {
             var entry = find(step.recipe().id());
-            if (unavailable(entry) != null) return false;
+            if (unavailable(entry) != null || entry.gridSize() != step.gridSize()) return false;
             var actual = assemble(entry, step.path(), step.inputs());
             if (actual == null || !ItemStack.matches(actual.output(), step.output())
                     || !CraftPlan.stackKeys(actual.remainders()).equals(CraftPlan.stackKeys(step.remainders()))) return false;
+            if (entry.furnace() != null) {
+                if (++cookingBatches > maxFurnaceBatches) return false;
+                var furnace = entry.furnace();
+                if (!furnace.requiresFuel()) continue; // assemble 已校验只有炉料。 / Assembly required a single cooking input.
+                int available = heat.getOrDefault(furnace.station(), 0);
+                var inputs = step.inputs();
+                if (entry.collectsWater() && inputs.get(1).is(Items.LAVA_BUCKET)) {
+                    int live = furnace.burnTicks(inputs.get(1));
+                    var frozen = index.fuels.get(furnace.station()).values().get(Items.LAVA_BUCKET);
+                    if (frozen == null || frozen.ticks() != live) return false;
+                    available += live;
+                }
+                for (int slot = entry.inputSlots(); slot < inputs.size(); slot++) {
+                    int live = furnace.burnTicks(inputs.get(slot));
+                    var frozen = index.fuels.get(furnace.station()).values().get(inputs.get(slot).getItem());
+                    if (frozen == null || frozen.ticks() != live) return false;
+                    available += live;
+                }
+                if (available < furnace.ticks()) return false;
+                heat.put(furnace.station(), available - furnace.ticks());
+            }
         }
         return true;
     }
@@ -189,6 +231,8 @@ public final class CraftingRecipes {
      * live recipes here still require assemble/validate revalidation. */
     public CraftingResultCode unavailable(Entry entry) {
         if (entry == null) return CraftingResultCode.UNSUPPORTED_RECIPE;
+        if (entry.station() != null && (furnaceMask & entry.station().bit()) == 0)
+            return CraftingResultCode.MISSING_WORKSTATION;
         if (limited && !unlocked.contains(entry.id())) return CraftingResultCode.RECIPE_LOCKED;
         if (entry.gridSize() == 3 && !workbench) return CraftingResultCode.MISSING_WORKSTATION;
         return null;
@@ -243,8 +287,23 @@ public final class CraftingRecipes {
      * Preserve replay provenance in the already copied authoritative step.
      * Origins do not replace live recipe matching, assembly or remainder checks. */
     public CraftPlan.Step assemble(Entry entry, String path, List<ItemStack> grid, List<Integer> origins) {
+        if (entry.station() != null) {
+            if (!entry.validProcessingInputs(grid)) return null;
+            var raw = entry.holder().value();
+            ItemStack output;
+            if (raw instanceof VanillaBrewingRecipe brewing) output = brewing.liveOutput(grid, player);
+            else if (raw instanceof AbstractCookingRecipe recipe) {
+                var input = new SingleRecipeInput(grid.getFirst().copy());
+                if (!recipe.matches(input, player.serverLevel())) return null;
+                output = recipe.assemble(input, player.registryAccess());
+            } else output = NativeStationRecipe.liveOutput(raw, grid, player);
+            if (!ItemStack.matches(output, entry.output())) return null;
+            var remainders = entry.processingRemainders();
+            grid.subList(entry.inputSlots(), grid.size()).stream().map(ItemStack::getCraftingRemainingItem).forEach(remainders::add);
+            return new CraftPlan.Step(entry.holder(), path, 1, grid, output, remainders, origins);
+        }
         CraftingInput input = CraftingInput.of(entry.gridSize(), entry.gridSize(), CraftPlan.copies(grid));
-        var recipe = entry.holder().value();
+        var recipe = (CraftingRecipe) entry.holder().value();
         if (!recipe.matches(input, player.serverLevel())) return null;
         ItemStack output = recipe.assemble(input, player.registryAccess()).copy();
         // 静态产物只是索引提示，不能凭空发明动态产物；含组件漂移的不支持行为必须拒绝。
@@ -263,18 +322,64 @@ public final class CraftingRecipes {
     }
 
     public static boolean protectedStack(ItemStack stack) {
-        return !stack.isEmpty() && !ItemStack.isSameItemSameComponents(stack, new ItemStack(stack.getItem()));
+        return !stack.isEmpty() && !stack.getComponentsPatch().isEmpty()
+                && !ItemStack.isSameItemSameComponents(stack, new ItemStack(stack.getItem()));
+    }
+
+    /** 只有已知的纯原版药水可以进入按组件精确匹配的酿造账本。 / Only plain vanilla potions enter exact brewing accounting. */
+    public static boolean planningStack(ItemStack stack) {
+        return !protectedStack(stack) || VanillaBrewingRecipe.isPlainVanillaPotion(stack);
+    }
+
+    public static boolean matchesInput(Ingredient ingredient, ItemStack stack) {
+        return !protectedStack(stack) ? ingredient.test(stack) : VanillaBrewingRecipe.acceptsPotion(ingredient, stack);
+    }
+
+    public static WorkstationCapability processingStation(Recipe<?> recipe) {
+        var furnace = FurnaceRecipe.of(recipe);
+        return furnace == null ? NativeStationRecipe.station(recipe) : furnace.station();
+    }
+
+    public static ResourceLocation nativeRecipeId(ResourceLocation id) {
+        return DRY_SPONGE_WITH_WATER.equals(id) ? DRY_SPONGE : id;
     }
 
     public record Requirement(int slot, Ingredient ingredient) {}
 
-    public record Entry(RecipeHolder<CraftingRecipe> holder, int gridSize,
-            List<Requirement> requirements, ItemStack output) {
+    public record Entry(RecipeHolder<?> holder, int gridSize,
+            List<Requirement> requirements, ItemStack output, FurnaceRecipe furnace) {
         public Entry {
             requirements = List.copyOf(requirements);
             output = output.copy();
         }
         public ResourceLocation id() { return holder.id(); }
+        public boolean collectsWater() { return DRY_SPONGE_WITH_WATER.equals(id()); }
+        public WorkstationCapability station() {
+            return furnace != null ? furnace.station() : gridSize == 1 ? NativeStationRecipe.station(holder.value()) : null;
+        }
+        public int inputSlots() { return gridSize == 1 ? requirements.size() : gridSize * gridSize; }
+
+        boolean validProcessingInputs(List<ItemStack> inputs) {
+            int slots = inputSlots();
+            if (inputs.size() < slots || inputs.size() > (furnace != null && furnace.requiresFuel() ? 9 : slots)) return false;
+            for (var demand : requirements) {
+                var stack = inputs.get(demand.slot());
+                if (stack.getCount() != 1 || !matchesInput(demand.ingredient(), stack)) return false;
+            }
+            for (int slot = slots; slot < inputs.size(); slot++)
+                if (inputs.get(slot).getCount() != 1 || protectedStack(inputs.get(slot))) return false;
+            return true;
+        }
+
+        ArrayList<ItemStack> processingRemainders() {
+            var returns = new ArrayList<ItemStack>();
+            if (collectsWater()) returns.add(new ItemStack(Items.WATER_BUCKET));
+            if (holder.value() instanceof VanillaBrewingRecipe brewing) {
+                var remainder = brewing.reagentRemainder();
+                if (!remainder.isEmpty()) returns.add(remainder);
+            }
+            return returns;
+        }
         @Override public ItemStack output() { return output.copy(); }
     }
 
@@ -293,10 +398,13 @@ public final class CraftingRecipes {
         List<Entry> valueOrdered = List.of();
         final Map<List<String>, List<Entry>> knowledge = new HashMap<>();
         final Map<Ingredient, List<Entry>> aliases = new IdentityHashMap<>();
+        final Map<Ingredient, List<Entry>> potionRelations = new IdentityHashMap<>();
+        final Map<Integer, List<Entry>> reachableByStation = new HashMap<>();
         final Set<ResourceLocation> valueRecipes = new java.util.HashSet<>();
         final Map<Item, ItemStack> remainders = new HashMap<>();
         final Set<Item> returnedItems = new java.util.HashSet<>();
         final Set<ResourceLocation> returningRecipes = new java.util.HashSet<>();
+        final Map<WorkstationCapability, FurnaceRecipe.FuelTable> fuels = new java.util.EnumMap<>(WorkstationCapability.class);
         int optionReferences, producerReferences;
         long lookups, hits, builds;
         long estimatedBytes;
@@ -322,9 +430,29 @@ public final class CraftingRecipes {
 
         private Index(Object identity) { this.identity = identity; }
 
-        @SuppressWarnings("unchecked")
         private void add(RecipeHolder<?> holder, HolderLookup.Provider registries) {
-            if (!holder.id().getNamespace().equals("minecraft") || !(holder.value() instanceof CraftingRecipe recipe)
+            if (holder.value() instanceof VanillaBrewingRecipe brewing) {
+                var furnace = FurnaceRecipe.of(brewing);
+                fuels.computeIfAbsent(furnace.station(), ignored -> furnace.fuels());
+                var requirements = brewing.requirements();
+                // 只有本目录生成的精确药水原料拥有独立的内存关系。磁盘物品 ID 键不能表示药水组件。
+                // Only catalog-owned exact potion ingredients get this in-memory relation. Disk item-ID keys cannot store their components.
+                potionRelations.put(requirements.getFirst().ingredient(), null);
+                addProcessing(new Entry(holder, 1, requirements, brewing.getResultItem(registries), furnace));
+                return;
+            }
+            if (!holder.id().getNamespace().equals("minecraft")) return;
+            if (holder.value() instanceof AbstractCookingRecipe cooking) {
+                addCooking(holder, cooking, registries);
+                return;
+            }
+            if (NativeStationRecipe.station(holder.value()) != null) {
+                var requirements = NativeStationRecipe.requirements(holder.value());
+                var output = holder.value().getResultItem(registries);
+                if (requirements != null && !output.isEmpty()) addProcessing(new Entry(holder, 1, requirements, output, null));
+                return;
+            }
+            if (!(holder.value() instanceof CraftingRecipe recipe)
                     || (recipe.getSerializer() != RecipeSerializer.SHAPED_RECIPE
                     && recipe.getSerializer() != RecipeSerializer.SHAPELESS_RECIPE)
                     || recipe.isSpecial() || recipe.isIncomplete() || recipe.getIngredients().isEmpty()) return;
@@ -364,12 +492,49 @@ public final class CraftingRecipes {
                 requirements.add(new Requirement(slot, ingredient));
             }
             if (requirements.isEmpty()) return;
-            var entry = new Entry((RecipeHolder<CraftingRecipe>) (RecipeHolder<?>) holder,
-                    size, requirements, output);
+            var entry = new Entry(holder, size, requirements, output, null);
             byId.put(holder.id(), entry);
             if (returnsContainer) returningRecipes.add(holder.id());
             if (valueRecipe) valueRecipes.add(holder.id());
             byOutput.computeIfAbsent(output.getItem(), ignored -> new ArrayList<>()).add(entry);
+        }
+
+        private void addCooking(RecipeHolder<?> holder, AbstractCookingRecipe recipe, HolderLookup.Provider registries) {
+            var furnace = FurnaceRecipe.of(recipe);
+            if (furnace == null || recipe.isIncomplete() || recipe.getIngredients().size() != 1) return;
+            var ingredient = recipe.getIngredients().getFirst();
+            if (key(ingredient) == null) return;
+            var options = ingredient.getItems();
+            if (java.util.Arrays.stream(options).anyMatch(stack ->
+                    !BuiltInRegistries.ITEM.getKey(stack.getItem()).getNamespace().equals("minecraft"))) return;
+            var output = recipe.getResultItem(registries);
+            if (output.isEmpty()) return;
+            if (furnace.requiresFuel()) {
+                var fuel = fuels.computeIfAbsent(furnace.station(), ignored -> furnace.fuels());
+                if (fuel.values().isEmpty()) return;
+                for (var value : fuel.values().values())
+                    if (!value.remainder().isEmpty()) returnedItems.add(value.remainder().getItem());
+            }
+            var entry = new Entry(holder, 1,
+                    List.of(new Requirement(0, Ingredient.of(java.util.Arrays.stream(options).map(ItemStack::copy)))), output, furnace);
+            addProcessing(entry);
+            // 接水只由明确选择触发。熔岩桶可同时供热，其空桶立即接水；普通烘干保留正常燃料返还。
+            // Water collection is explicit. A lava bucket can supply heat and then collect water. Plain drying retains normal fuel returns.
+            if (holder.id().equals(DRY_SPONGE) && options.length == 1 && options[0].is(Items.WET_SPONGE)
+                    && ItemStack.matches(output, new ItemStack(Items.SPONGE)) && furnace.station() == WorkstationCapability.FURNACE)
+                addProcessing(new Entry(new RecipeHolder<>(DRY_SPONGE_WITH_WATER, recipe), 1,
+                        List.of(entry.requirements().getFirst(), new Requirement(1, Ingredient.of(Items.BUCKET, Items.LAVA_BUCKET))), output, furnace));
+        }
+
+        private void addProcessing(Entry entry) {
+            byId.put(entry.id(), entry);
+            valueRecipes.add(entry.id());
+            byOutput.computeIfAbsent(entry.output.getItem(), ignored -> new ArrayList<>()).add(entry);
+            var returns = entry.processingRemainders();
+            if (!returns.isEmpty()) {
+                returningRecipes.add(entry.id());
+                for (var stack : returns) returnedItems.add(stack.getItem());
+            }
         }
 
         /** 同步服务端构造及客户端切片初始化共用此规范化器；每单元在所属游戏线程原子完成，超时被测量而非假装可抢占。
@@ -379,6 +544,7 @@ public final class CraftingRecipes {
         static final class Builder {
             private final java.security.MessageDigest modelDigest = RecipeKnowledgeCache.digest();
             private final Map<Object, com.google.gson.JsonObject> componentValues = new HashMap<>();
+            private final Set<WorkstationCapability> fingerprintedFuels = java.util.EnumSet.noneOf(WorkstationCapability.class);
             private final Index index;
             private final HolderLookup.Provider registries;
             private final java.util.Iterator<RecipeHolder<?>> recipes;
@@ -396,10 +562,10 @@ public final class CraftingRecipes {
 
             private Builder(Index index, Collection<RecipeHolder<?>> recipes, HolderLookup.Provider registries, boolean warm) {
                 this.index = index;
-                this.recipes = recipes.iterator();
+                this.recipes = com.google.common.collect.Iterators.concat(recipes.iterator(), VanillaBrewingRecipe.recipes().iterator());
                 this.registries = registries;
                 this.warm = warm;
-                RecipeKnowledgeCache.field(modelDigest, "craftable-value-model-v2");
+                RecipeKnowledgeCache.field(modelDigest, "craftable-value-model-v3");
             }
 
             boolean advance(long nanos, java.util.function.LongSupplier clock) {
@@ -416,6 +582,10 @@ public final class CraftingRecipes {
                                 sorted.put(holder.id().toString(), entry);
                                 for (var requirement : entry.requirements())
                                     normalizedOptions += requirement.ingredient().getItems().length;
+                                if (entry.id().equals(DRY_SPONGE) && index.byId.containsKey(DRY_SPONGE_WITH_WATER)) {
+                                    sorted.put(DRY_SPONGE_WITH_WATER.toString(), index.byId.get(DRY_SPONGE_WITH_WATER));
+                                    normalizedOptions += 3;
+                                }
                                 if (warm && (sorted.size() > RecipeKnowledgeCache.MAX_KEYS
                                         || normalizedOptions > RecipeKnowledgeCache.MAX_REFERENCES))
                                     throw new IllegalStateException("Local catalog exceeds bounds");
@@ -469,10 +639,29 @@ public final class CraftingRecipes {
             private void fingerprintEntry(Entry entry) {
                 RecipeKnowledgeCache.field(modelDigest, entry.id().toString());
                 RecipeKnowledgeCache.field(modelDigest, entry.gridSize() + ":" + index.valueRecipes.contains(entry.id()));
+                if (entry.furnace() != null) {
+                    var furnace = entry.furnace();
+                    RecipeKnowledgeCache.field(modelDigest, furnace.station().name());
+                    RecipeKnowledgeCache.field(modelDigest, furnace.ticks() + ":" + furnace.experience());
+                    if (furnace.requiresFuel() && fingerprintedFuels.add(furnace.station())) {
+                        index.fuels.get(furnace.station()).values().entrySet().stream()
+                                .sorted(Comparator.comparing(fuel -> BuiltInRegistries.ITEM.getKey(fuel.getKey()).toString()))
+                                .forEach(fuel -> {
+                                    RecipeKnowledgeCache.field(modelDigest, BuiltInRegistries.ITEM.getKey(fuel.getKey()).toString());
+                                    RecipeKnowledgeCache.field(modelDigest, Integer.toString(fuel.getValue().ticks()));
+                                    fingerprintStack(fuel.getValue().remainder());
+                                });
+                    }
+                }
                 fingerprintStack(entry.output());
+                entry.processingRemainders().forEach(this::fingerprintStack);
                 for (var demand : entry.requirements()) {
                     RecipeKnowledgeCache.field(modelDigest, "slot:" + demand.slot());
                     var options = key(demand.ingredient());
+                    if (entry.holder().value() instanceof VanillaBrewingRecipe && demand.slot() == 0) {
+                        fingerprintStack(demand.ingredient().getItems()[0]);
+                        continue;
+                    }
                     RecipeKnowledgeCache.field(modelDigest, options == null ? "unknown" : options.toString());
                     if (options != null) for (var option : options) {
                         var item = BuiltInRegistries.ITEM.get(ResourceLocation.parse(option));
@@ -504,6 +693,13 @@ public final class CraftingRecipes {
             lookups++;
             var alias = aliases.get(ingredient);
             if (alias != null) { hits++; return alias; }
+            if (potionRelations.containsKey(ingredient)) {
+                var exact = potionRelations.get(ingredient);
+                if (exact != null) { hits++; return exact; }
+                exact = producingUncached(ingredient);
+                potionRelations.put(ingredient, exact);
+                return exact;
+            }
             var key = key(ingredient);
             var result = key == null ? null : knowledge.get(key);
             if (result != null) hits++;
@@ -517,6 +713,17 @@ public final class CraftingRecipes {
                 estimatedBytes += aliasBytes;
             }
             return result;
+        }
+
+        List<Entry> reachableEntries(int stationMask) {
+            var cached = reachableByStation.get(stationMask);
+            if (cached != null) return cached;
+            // 未放置工作站的配方不会扩张可达闭包，静态过滤可在同代多次求解间共享。
+            // Recipes without a station cannot grow reachability. Reuse that static filter across requests in one generation.
+            var entries = valueOrdered.stream().filter(entry -> entry.station() == null
+                    || (stationMask & entry.station().bit()) != 0).toList();
+            if (reachableByStation.size() < 16) reachableByStation.put(stationMask, entries);
+            return entries;
         }
 
         /** 仅缓存完整候选集合；缺键或缓存超限绝不意味着无配方，调用者仍返回完整的现算关系。
@@ -551,7 +758,8 @@ public final class CraftingRecipes {
             if (ordered.size() > RecipeKnowledgeCache.MAX_KEYS) return null;
             try {
                 var digest = RecipeKnowledgeCache.digest();
-                RecipeKnowledgeCache.field(digest, "craftable-ordinary-knowledge-v2");
+                RecipeKnowledgeCache.field(digest, "craftable-ordinary-knowledge-v3");
+                RecipeKnowledgeCache.field(digest, planningFingerprint);
                 RecipeKnowledgeCache.field(digest, server.getServerVersion());
                 RecipeKnowledgeCache.field(digest,
                         net.neoforged.neoforge.internal.versions.neoforge.NeoForgeVersion.getVersion());
@@ -559,6 +767,7 @@ public final class CraftingRecipes {
                 long serializedChars = 0;
                 for (var entry : ordered) {
                     RecipeKnowledgeCache.field(digest, entry.id().toString());
+                    if (entry.holder().value() instanceof VanillaBrewingRecipe) continue;
                     // 包含完整配方数据而非仅 ID/声明产物；下方解析后的普通物品集合还覆盖嵌套成员和空标签变化。
                     // Include full recipe data, not just IDs or declared result.
                     // Resolved ordinary item sets below additionally cover tag

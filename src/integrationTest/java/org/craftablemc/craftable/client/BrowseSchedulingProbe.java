@@ -68,7 +68,7 @@ public final class BrowseSchedulingProbe {
             ClientBrowsePlanner.receive(new org.craftablemc.craftable.network.CraftingDetailPayloads.BrowseLease(
                     lease.menuId(), lease.revision(), lease.session(), lease.recipes(), lease.resources(),
                     Minecraft.getInstance().level.getGameTime() - 1, lease.fingerprint(), null,
-                    lease.settings(), lease.workbench(), lease.rules()));
+                    lease.settings(), lease.workbench(), lease.rules(), lease.furnaceMask()));
         }
         head = field(ClientBrowsePlanner.class, null, "background");
         if (head != null) {

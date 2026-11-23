@@ -1,6 +1,6 @@
 # Craftable
 
-> Craft what you can, from what you have.
+> An enhanced recipe book that shows what you can make with the materials around you.
 
 [简体中文](README.zh-CN.md) · [User guide](docs/user-guide.en.md) · [Documentation](docs/README.md)
 
@@ -74,8 +74,9 @@ for whitelist modes, capacity, settings, and troubleshooting.
 
 ## Current limits
 
-Craftable is in development. Current support is for ordinary crafting recipes,
-not furnace processing, undo or general third-party machines.
+Craftable is in development. Its recipe chains support ordinary crafting and
+vanilla furnace, blast furnace and smoker recipes. Undo and third-party
+machines are outside the current scope.
 Dropped items, entity inventories, and the contents of carried shulker boxes or
 bundles are not crafting inputs. Creative and Spectator modes do not enable its
 crafting capability.

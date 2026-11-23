@@ -90,7 +90,7 @@ public final class CraftableFeedback {
         // 中文：沿用原版成功反馈：物品进入背包即可，不为每次成功再发通知。
         // Ordinary vanilla crafting does not announce every successful item.
         // Seeing the output enter the inventory remains the success feedback.
-        if (resultCode == CraftingResultCode.CREATED) {
+        if (resultCode == CraftingResultCode.CREATED || resultCode == CraftingResultCode.FURNACE_QUEUED) {
             return;
         }
 

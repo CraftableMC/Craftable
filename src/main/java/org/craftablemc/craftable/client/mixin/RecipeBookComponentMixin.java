@@ -1,12 +1,20 @@
 package org.craftablemc.craftable.client.mixin;
 
+import java.util.List;
 import net.minecraft.client.multiplayer.MultiPlayerGameMode;
+import net.minecraft.client.ClientRecipeBook;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.RecipeBookCategories;
 import net.minecraft.client.gui.screens.recipebook.RecipeBookComponent;
+import net.minecraft.client.gui.screens.recipebook.RecipeBookTabButton;
+import net.minecraft.client.gui.screens.recipebook.RecipeCollection;
+import net.minecraft.client.searchtree.SearchTree;
 import net.minecraft.world.inventory.RecipeBookMenu;
+import net.minecraft.world.item.crafting.CraftingRecipe;
 import net.minecraft.world.item.crafting.RecipeHolder;
-import org.craftablemc.craftable.client.CraftableFeedback;
+import org.craftablemc.craftable.client.CraftingPlanOverlay;
 import org.craftablemc.craftable.client.recipebook.RecipeBookProjection;
-import org.craftablemc.craftable.api.CraftingResultCode;
+import org.craftablemc.craftable.client.recipebook.RecipeButtonTargetResolver;
 import org.craftablemc.craftable.menu.AmbientInventoryMenu;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -23,12 +31,38 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 @Mixin(RecipeBookComponent.class)
 public abstract class RecipeBookComponentMixin {
     @Shadow protected RecipeBookMenu<?, ?> menu;
+    @Shadow private ClientRecipeBook book;
     @Unique private Object craftable$scope;
     @Unique private java.util.List<net.minecraft.client.gui.screens.recipebook.RecipeCollection> craftable$shown = java.util.List.of();
 
     @Inject(method = "initVisuals", at = @At("HEAD"))
     private void craftable$newLayout(org.spongepowered.asm.mixin.injection.callback.CallbackInfo ci) {
         craftable$scope = null; craftable$shown = java.util.List.of();
+    }
+
+    @Redirect(method = "updateCollections", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/ClientRecipeBook;getCollection(Lnet/minecraft/client/RecipeBookCategories;)Ljava/util/List;"))
+    private List<RecipeCollection> craftable$cookingRoots(
+            ClientRecipeBook book, RecipeBookCategories category) {
+        return RecipeBookProjection.collections(book, category);
+    }
+
+    @Redirect(method = "updateCollections", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/searchtree/SearchTree;search(Ljava/lang/String;)Ljava/util/List;"))
+    private List<RecipeCollection> craftable$searchProjectedCollections(SearchTree<RecipeCollection> search, String query) {
+        var category = ((RecipeBookComponentAccessor) this).craftable$getSelectedTab().getCategory();
+        return RecipeBookProjection.searchMatches(book, category, search.search(query), query);
+    }
+
+    @Redirect(method = "updateTabs", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/gui/screens/recipebook/RecipeBookTabButton;updateVisibility(Lnet/minecraft/client/ClientRecipeBook;)Z"))
+    private boolean craftable$cookingTab(RecipeBookTabButton tab, ClientRecipeBook book) {
+        if (!RecipeBookProjection.active()) return tab.updateVisibility(book);
+        // 合并集合只有在打开页签时才计算材料状态。页签可见性直接读取配方资格。
+        // A merged collection computes material state when opened. Tab visibility reads recipe eligibility directly.
+        tab.visible = RecipeBookProjection.collections(book, tab.getCategory()).stream()
+                .flatMap(collection -> collection.getRecipes().stream()).anyMatch(RecipeBookProjection::visible);
+        return tab.visible;
     }
 
     @Redirect(method = "updateCollections", at = @At(value = "INVOKE",
@@ -73,11 +107,13 @@ public abstract class RecipeBookComponentMixin {
     @Redirect(method = "mouseClicked", at = @At(value = "INVOKE",
             target = "Lnet/minecraft/client/multiplayer/MultiPlayerGameMode;handlePlaceRecipe(ILnet/minecraft/world/item/crafting/RecipeHolder;Z)V"))
     private void craftable$validGhostGrid(MultiPlayerGameMode gameMode, int id, RecipeHolder<?> recipe, boolean shift) {
-        // 中文：ALL 可展示 3x3 目标，但实际 2x2 菜单不能接收其幽灵配方图案。
-        // ALL may show 3x3 targets while the actual menu is 2x2. Never ask vanilla
-        // to place that pattern into the wrong slot topology.
-        if (RecipeBookProjection.active() && !recipe.value().canCraftInDimensions(menu.getGridWidth(), menu.getGridHeight())) {
-            CraftableFeedback.showCreateResult(CraftingResultCode.MISSING_WORKSTATION, true);
+        // 原版只在配方已解锁且合成格匹配时能填放或显示虚影，其余路线打开只读详情。
+        // Vanilla can place or show ghosts only for unlocked recipes that fit the grid. Other routes open read-only details.
+        if (RecipeBookProjection.active() && (!(recipe.value() instanceof CraftingRecipe) || !book.contains(recipe)
+                || !recipe.value().canCraftInDimensions(menu.getGridWidth(), menu.getGridHeight()))) {
+            var page = ((RecipeBookComponentAccessor) this).craftable$getRecipeBookPage();
+            CraftingPlanOverlay.open(Minecraft.getInstance().screen, recipe.id(), false,
+                    RecipeButtonTargetResolver.outputVariants(page.getLastClickedRecipeCollection(), recipe));
             return;
         }
         gameMode.handlePlaceRecipe(id, recipe, shift);

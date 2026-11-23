@@ -40,9 +40,12 @@
 | 资料 | 当前用途 |
 | --- | --- |
 | [01 实施路线图](01-roadmap.md) | 当前实施顺序、已完成阶段和后续范围。 |
+| [19 M5 实施计划](19-m5-implementation-plan.md) | 客户端静态目录预热、原版工作站、计时订单及配方范围。 |
+| [20 M5 验收与测试记录](20-m5-acceptance.md) | 验收条目、已执行的验证、当前阻塞和取舍。 |
+| [21 配方与生产规划模型](21-production-planning-model.md) | 与 M5、M6 并行推进的建模草案，记录语义、接入契约和验证基准。 |
 | [17 代码质量审计](17-production-behavior-audit.md) | Pre-M5 收尾时的行为链审计、等价清理、独立缺陷和针对性验证。 |
 
-Pre-M5 于 2026-10-28 结束。M5 尚未开始，M6 的配方书改进和 R1 的资源端点仍处于设计阶段。
+Pre-M5 于 2026-10-28 结束。M5 正在实施，M6 的配方书改进和 R1 的资源端点仍处于设计阶段。统一建模与接入契约验证已经单独启动。
 
 ## 历史阶段实施与验收
 
@@ -71,6 +74,7 @@ ADR 解释决策背景、备选方案与安全边界。是否被替代，应看�
 | [ADR-0006](adr/0006-m4-bounded-planning-and-chain-transaction.md) | 有界规划和整链守恒事务。 |
 | [ADR-0007](adr/0007-shared-recipe-knowledge.md) | 共享静态配方知识与有界持久化。 |
 | [ADR-0008](adr/0008-snapshot-scoped-client-planning.md) | 授权快照作用域与同核客户端规划。 |
+| [ADR-0009](adr/0009-recipe-route-selection-in-plan-details.md) | 在配方链详情中选择路线并按工作站预览配方。 |
 
 ## 测试与维护入口
 

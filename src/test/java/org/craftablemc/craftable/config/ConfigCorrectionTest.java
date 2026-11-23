@@ -41,6 +41,36 @@ class ConfigCorrectionTest {
         assertEquals(5, (int) config.get("environment.diagnosticCacheTicks"));
     }
 
+    @Test void furnaceSettingsUseWorldDefaultsAndBoundedWholeRequestLimit() {
+        var config = CommentedConfig.inMemory();
+        CraftableServerConfig.SPEC.correct(config);
+        assertTrue((boolean) config.get("crafting.timeCompression"));
+        assertEquals(64, (int) config.get("crafting.maxFurnaceBatches"));
+        config.set("crafting.timeCompression", false);
+        config.set("crafting.maxFurnaceBatches", 0);
+        CraftableServerConfig.SPEC.correct(config);
+        assertFalse((boolean) config.get("crafting.timeCompression"));
+        assertEquals(1, (int) config.get("crafting.maxFurnaceBatches"));
+        config.set("crafting.maxFurnaceBatches", 65);
+        CraftableServerConfig.SPEC.correct(config);
+        assertEquals(64, (int) config.get("crafting.maxFurnaceBatches"));
+        var clientValues = ConfigSettings.values(CraftableClientConfig.SPEC);
+        assertTrue(clientValues.stream().noneMatch(value -> java.util.Set.of("timeCompression", "maxFurnaceBatches")
+                .contains(value.getPath().getLast())), "Furnace rules must not become independent client preferences");
+    }
+
+    @Test void furnaceRulesParticipateInConfirmationIdentityAndRejectInvalidLimits() {
+        var rules = new CraftableServerConfig.CraftingRules(
+                CraftableServerConfig.SurplusDelivery.REQUIRE_SPACE, 64, 128, DirectPreparationPolicy.DEFAULT, true, 64);
+        assertNotEquals(rules, new CraftableServerConfig.CraftingRules(rules.surplusDelivery(),
+                rules.maxBatches(), rules.maxPlanSteps(), rules.directPreparation(), false, rules.maxFurnaceBatches()));
+        assertNotEquals(rules, new CraftableServerConfig.CraftingRules(rules.surplusDelivery(),
+                rules.maxBatches(), rules.maxPlanSteps(), rules.directPreparation(), rules.timeCompression(), 17));
+        for (int invalid : new int[]{-1, 0, 65, Integer.MAX_VALUE})
+            assertThrows(IllegalArgumentException.class, () -> new CraftableServerConfig.CraftingRules(
+                    rules.surplusDelivery(), rules.maxBatches(), rules.maxPlanSteps(), rules.directPreparation(), true, invalid));
+    }
+
     @Test void directPreparationDefaultsAndRegisteredWholeListBoundsAreShared() {
         // 需同时检查整表校验与已注册对象身份：仅逐ID合法，不能证明名单总长有界或两套界面共用同一设置。
         // Check whole-list validation and registered identity: valid individual IDs prove neither total bounds nor one definition shared by both UIs.

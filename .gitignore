@@ -14,6 +14,9 @@ out/
 
 .run/
 
+### Local workspace ###
+/.local/
+
 ### Eclipse ###
 .apt_generated
 .classpath

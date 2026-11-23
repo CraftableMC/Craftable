@@ -45,6 +45,14 @@ public record EnvironmentSnapshot(
         return workstations.stream().anyMatch(endpoint -> endpoint.capability() == capability);
     }
 
+    /** 当前可用的加工工作站能力，不含合成格位，也不代表配方已获执行授权。
+     * Available processing capabilities. They exclude crafting grids and grant no execution authority. */
+    public int furnaceMask() {
+        int mask = 0;
+        for (var endpoint : workstations) mask |= endpoint.capability().bit();
+        return mask & WorkstationCapability.PROCESSING_MASK;
+    }
+
     private static void requireUniqueIds(List<String> ids, String label) {
         HashSet<String> unique = new HashSet<>();
         for (String id : ids) {

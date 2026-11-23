@@ -48,21 +48,29 @@ public final class CraftingDetailPayloads {
     public record BrowseLease(int menuId, long revision, UUID session, long recipes, long resources,
             long expires, String fingerprint, CraftingWire.SnapshotHeader header,
             org.craftablemc.craftable.config.EnvironmentScanSettings settings, boolean workbench,
-            org.craftablemc.craftable.config.CraftableServerConfig.CraftingRules rules) implements CustomPacketPayload {
+            org.craftablemc.craftable.config.CraftableServerConfig.CraftingRules rules, int furnaceMask) implements CustomPacketPayload {
         public BrowseLease {
             identity(menuId, revision);
             java.util.Objects.requireNonNull(settings);
             java.util.Objects.requireNonNull(rules);
+            if ((furnaceMask & ~org.craftablemc.craftable.workstation.WorkstationCapability.PROCESSING_MASK) != 0)
+                throw new IllegalArgumentException("Invalid browse furnace capabilities");
             if (recipes < 0 || resources < 0 || fingerprint.length() != 64
                     || header != null && (!header.session().equals(session) || header.recipes() != recipes
                     || header.resources() != resources)) throw new IllegalArgumentException("Invalid browse grant");
+        }
+        public BrowseLease(int menuId, long revision, UUID session, long recipes, long resources,
+                long expires, String fingerprint, CraftingWire.SnapshotHeader header,
+                org.craftablemc.craftable.config.EnvironmentScanSettings settings, boolean workbench,
+                org.craftablemc.craftable.config.CraftableServerConfig.CraftingRules rules) {
+            this(menuId, revision, session, recipes, resources, expires, fingerprint, header, settings, workbench, rules, 0);
         }
         public static final Type<BrowseLease> TYPE = new Type<>(Craftable.id("browse_lease"));
         public static final StreamCodec<RegistryFriendlyByteBuf, BrowseLease> CODEC = CustomPacketPayload.codec(
                 (p,b) -> {
                     b.writeVarInt(p.menuId); b.writeVarLong(p.revision); b.writeUUID(p.session);
                     b.writeVarLong(p.recipes); b.writeVarLong(p.resources); b.writeLong(p.expires); b.writeUtf(p.fingerprint,64);
-                    SettingsPayloads.writeScan(b, p.settings); b.writeBoolean(p.workbench);
+                    SettingsPayloads.writeScan(b, p.settings); b.writeBoolean(p.workbench); b.writeVarInt(p.furnaceMask);
                     SettingsPayloads.writeCrafting(b, p.rules);
                     b.writeBoolean(p.header != null);
                     if (p.header != null) { b.writeUUID(p.header.transfer()); b.writeVarInt(p.header.bytes()); b.writeVarInt(p.header.chunks()); b.writeBytes(p.header.digest()); }
@@ -71,11 +79,12 @@ public final class CraftingDetailPayloads {
                     long recipes = b.readVarLong(), resources = b.readVarLong(), expires = b.readLong(); String fingerprint = b.readUtf(64);
                     var settings = SettingsPayloads.readScan(b);
                     boolean workbench = b.readBoolean();
+                    int furnaceMask = b.readVarInt();
                     var rules = SettingsPayloads.readCrafting(b);
                     CraftingWire.SnapshotHeader header = null;
                     if (b.readBoolean()) { UUID transfer = b.readUUID(); int bytes = b.readVarInt(), chunks = b.readVarInt(); byte[] digest = new byte[32]; b.readBytes(digest);
                         header = new CraftingWire.SnapshotHeader(session, transfer, recipes, resources, bytes, chunks, digest); }
-                    return new BrowseLease(menu, revision, session, recipes, resources, expires, fingerprint, header, settings, workbench, rules);
+                    return new BrowseLease(menu, revision, session, recipes, resources, expires, fingerprint, header, settings, workbench, rules, furnaceMask);
                 });
         @Override public Type<BrowseLease> type() { return TYPE; }
     }

@@ -43,7 +43,9 @@ public final class CraftingSessions {
         State owner = state(player);
         boolean workbench = world.supports(org.craftablemc.craftable.workstation.WorkstationCapability.CRAFTING_3X3)
                 || player.containerMenu instanceof net.minecraft.world.inventory.CraftingMenu;
-        var recipes = new org.craftablemc.craftable.recipe.CraftingRecipes(player, workbench);
+        var rules = CraftableServerConfig.craftingRules();
+        var recipes = new org.craftablemc.craftable.recipe.CraftingRecipes(player, workbench,
+                rules.directPreparation(), world.furnaceMask(), rules.maxFurnaceBatches());
         if (owner.recipeIdentity.get() != recipes.generation()) {
             owner.recipeIdentity = new java.lang.ref.WeakReference<>(recipes.generation());
             owner.recipeVersion = Math.incrementExact(owner.recipeVersion);
@@ -52,7 +54,7 @@ public final class CraftingSessions {
         if (owner.browsing == null || owner.browsing.dimension != player.level().dimension())
             owner.browsing = new BrowsingState(player.level().dimension());
         try {
-            return owner.browsing.capture(player, world, recipes, owner.recipeVersion);
+            return owner.browsing.capture(player, world, recipes, owner.recipeVersion, rules);
         } catch (RuntimeException failure) {
             // 捕获中断或超限不能续命旧授权。
             // An interrupted/oversized capture cannot renew the old grant.
@@ -86,7 +88,7 @@ public final class CraftingSessions {
             var binding = browsing.endpoints.get(endpoint.id());
             for (var reference : binding.references.entrySet()) {
                 var stack = endpoint.container().getItem(reference.getKey());
-                if (!stack.isEmpty() && !org.craftablemc.craftable.recipe.CraftingRecipes.protectedStack(stack))
+                if (!stack.isEmpty() && org.craftablemc.craftable.recipe.CraftingRecipes.planningStack(stack))
                     result.put(reference.getValue().toString(), new org.craftablemc.craftable.planner.ResourceLedger.Source(
                             endpoint.id(), reference.getKey(), stack));
             }
@@ -135,7 +137,7 @@ public final class CraftingSessions {
 
         org.craftablemc.craftable.environment.BrowsingSnapshot capture(ServerPlayer player,
                 org.craftablemc.craftable.environment.EnvironmentSnapshot world,
-                org.craftablemc.craftable.recipe.CraftingRecipes recipes, long recipeVersion) {
+                org.craftablemc.craftable.recipe.CraftingRecipes recipes, long recipeVersion, CraftableServerConfig.CraftingRules rules) {
             var next = new java.util.LinkedHashMap<String, EndpointBinding>();
             var inputs = new java.util.ArrayList<org.craftablemc.craftable.environment.BrowsingSnapshot.Input>();
             int slots = 0;
@@ -149,18 +151,18 @@ public final class CraftingSessions {
                 next.put(endpoint.id(), binding);
                 for (int slot = endpoint.firstSlot(); slot < endpoint.firstSlot() + endpoint.slotCount(); slot++) {
                     var stack = endpoint.container().getItem(slot);
-                    if (stack.isEmpty() || org.craftablemc.craftable.recipe.CraftingRecipes.protectedStack(stack)) continue;
+                    if (stack.isEmpty() || !org.craftablemc.craftable.recipe.CraftingRecipes.planningStack(stack)) continue;
                     var reference = binding.references.computeIfAbsent(slot, ignored -> UUID.randomUUID());
                     inputs.add(new org.craftablemc.craftable.environment.BrowsingSnapshot.Input(reference,
                             endpoint.kind() == org.craftablemc.craftable.environment.EndpointKind.PLAYER ? slot : -1, stack));
                 }
             }
-            var rules = CraftableServerConfig.craftingRules();
             var candidate = new org.craftablemc.craftable.environment.BrowsingSnapshot(session, recipeVersion, Math.incrementExact(version),
                     recipes.workbench(), recipes.limitedCrafting(), recipes.unlockedRecipes(),
                     rules.surplusDelivery() == CraftableServerConfig.SurplusDelivery.DROP_OVERFLOW,
                     rules.maxBatches(), rules.maxPlanSteps(), rules.directPreparation(), player.getInventory().getMaxStackSize(),
-                    MainInventoryInsertion.copyMainInventory(player.getInventory()), inputs);
+                    MainInventoryInsertion.copyMainInventory(player.getInventory()), inputs,
+                    recipes.furnaceMask(), rules.timeCompression(), rules.maxFurnaceBatches());
             // 私有身份也包含空端点和权限边界；获准内容相同时，刻意排除时间、扫描号及玩家当前位置。
             // Include empty endpoints/permission boundaries in the private
             // identity too. Time, scan number and current player position are

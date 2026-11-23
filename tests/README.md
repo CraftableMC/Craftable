@@ -33,7 +33,7 @@ CI 沿用 Gradle 标准 `build` 生命周期，当前[工作流](../.github/work
 | --- | --- | --- | --- |
 | unit | `cleanTest test` | 配置与模式、手势、预算、网络帧、快照接收、知识文件、翻译键/参数及纯 UI 几何 | 不验证真实菜单渲染、世界事务或局域网 |
 | server | `runGameTestServer` | 扫描与菜单资源、递归规划、余料/容量、事务回滚、见证攻击、规则与预算、缓存 | 不验证客户端帧或多设备延迟 |
-| inventory | `runClient -PcraftableClientSuite=inventory` | 原版配方书、筛选、C 制作、实体工作台、菜单材料移动、模式切换、药水效果、迟到确认回复隔离 | 不代表所有装备操作或真实两机体验 |
+| inventory | `runClient -PcraftableClientSuite=inventory` | 进世界后预热静态目录、首次浏览复用、原版配方书、筛选、C 制作、实体工作台、菜单材料移动、模式切换、药水效果、迟到确认回复隔离 | 不代表所有装备操作或真实两机体验 |
 | planning | `runClient -PcraftableClientSuite=planning` | 目录与调度、未知结论、Shift+C、候选/材质、数量/MAX、实际成本、见证确认、部分合成、双语界面和设置 | 不代表任意模组目录、硬件或网络条件 |
 | settings | `runClient -PcraftableClientSuite=settings` | 导航、草稿与持久化、权威规则、白名单、专业页、双语排版和清理恢复 | 不包含延期 MAX 或完整 planning |
 | diagnostic + lease | planning 加 `-PcraftableClientDiagnostic=lease` | 确认按钮的租约过期、同值续期和只读 MAX 等待 | 在租约场景后结束，不能作为 planning 全量证据 |
@@ -58,9 +58,11 @@ knowledge 的 warmup 进程必须实际保存有效缓存。restart 启动前核
 | `execution/SearchRegressionGameTests`、`AdmissionGameTests`、`CapacityDiagnosticGameTests` | 预算与准入、完整否定/未知边界、容量失败及合法替代路线 |
 | `execution/BulkPlanningGameTests`、`WitnessAccountingGameTests`、`WitnessReviewGameTests` | 多批次、保守材料证书、真实来源与贡献、见证重放及共享预算 |
 | `execution/StepLimitGameTests`、`WorldRulesGameTests`、`DirectPreparationGameTests` | 当前步数、四态部分规则、世界/个人交集、单白名单、真实规则同步及确认失效 |
+| `environment/FurnaceScannerGameTests`、`execution/FurnaceChainGameTests`、`FurnaceJobsGameTests` | 原版炉准入、燃料和整链扣料、实际炉 tick、暂停、持久化、满包重试、退款与防重放 |
+| `execution/ProducerRouteGameTests`、`DetailsGameTests` | 羊毛数量不足和重复染色、铁裤腿的直接炉路线、整批候选排序及详情草图 |
 | `planner/MissingIdentityGameTests`、`network/BrowseTransferGameTests`、`recipe/KnowledgeGameTests` | 材料身份、实际快照发送与补传、静态关系和缓存边界 |
 | `execution/PlanningTestSupport`、`TransactionTestSupport` | 包内玩家/会话清理、搜索与资源快照辅助，供 GameTest 共用 |
-| `client/InventoryClientSmoke` | inventory 调度；`RepeatCraftScenario`、`MenuMoveScenario` 和 `LateConfirmationScenario` 负责连续制作、材料移动及迟到回复 |
+| `client/InventoryClientSmoke` | inventory 调度；具名场景覆盖连续制作、材料移动、迟到回复，以及 `FurnaceProgressScenario` 的计时加工、三种界面和背包领取 |
 | `client/PlanningClientSmoke` | planning 调度；按具名步骤等待就绪、分派场景、处理超时与清理 |
 | `client/BrowsingScenario`、`BrowseSchedulingProbe`、`DiagnosticLifecycleScenario` | 浏览规则同步、任务公平性/提升、结论与诊断隔离、未知终止 |
 | `client/PlanningReviewScenario`、`LeaseReadinessScenario`、`PersonalPreferenceLifecycleScenario` | 候选与权威审阅、完整/部分确认、租约就绪、个人偏好变化后的意图和令牌失效 |
