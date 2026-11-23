@@ -53,7 +53,7 @@ public final class CraftingDetailPayloads {
             identity(menuId, revision);
             java.util.Objects.requireNonNull(settings);
             java.util.Objects.requireNonNull(rules);
-            if ((furnaceMask & ~org.craftablemc.craftable.workstation.WorkstationCapability.COOKING_MASK) != 0)
+            if ((furnaceMask & ~org.craftablemc.craftable.workstation.WorkstationCapability.PROCESSING_MASK) != 0)
                 throw new IllegalArgumentException("Invalid browse furnace capabilities");
             if (recipes < 0 || resources < 0 || fingerprint.length() != 64
                     || header != null && (!header.session().equals(session) || header.recipes() != recipes

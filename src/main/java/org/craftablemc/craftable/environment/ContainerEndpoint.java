@@ -3,8 +3,12 @@ package org.craftablemc.craftable.environment;
 import java.util.Objects;
 import javax.annotation.Nullable;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Container;
+import net.minecraft.world.LockCode;
+import net.minecraft.world.level.block.entity.BaseContainerBlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntity;
 
 /**
  * 受槽范围约束的短期活容器视图，不能当作长期授权；提交前重新扫描并验证内容。
@@ -36,5 +40,13 @@ public record ContainerEndpoint(
 
     public boolean isStillValid(ServerPlayer player) {
         return (kind != EndpointKind.BLOCK && kind != EndpointKind.MENU_INPUT) || container.stillValid(player);
+    }
+
+    /** 复用原版的锁与钥匙比较，避免后台扫描或复验发消息、播声音。
+     * Match vanilla's lock/key check without emitting messages or sounds during scans or revalidation. */
+    public static boolean canOpenWithoutSideEffects(ServerPlayer player, BlockEntity blockEntity) {
+        if (!(blockEntity instanceof BaseContainerBlockEntity baseContainer)) return true;
+        LockCode lock = baseContainer.collectComponents().getOrDefault(DataComponents.LOCK, LockCode.NO_LOCK);
+        return player.isSpectator() || lock.unlocksWith(player.getMainHandItem());
     }
 }

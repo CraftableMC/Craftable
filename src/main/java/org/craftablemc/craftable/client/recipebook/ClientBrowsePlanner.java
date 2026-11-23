@@ -271,6 +271,13 @@ public final class ClientBrowsePlanner {
 
     private static boolean needsSearch(ResourceLocation id) {
         if (ClientRecipeStatusStore.computed(id) || !ClientRecipeStatusStore.canRecord(id)) return false;
+        // 工作站和解锁拒绝已经由本次验证过的快照确定，不启动必然只返回同一拒绝的数量搜索。
+        // A verified snapshot already determines station and unlock refusals; no quantity search can change that result.
+        var unavailable = input.unavailable(input.find(id));
+        if (unavailable != null) {
+            ClientRecipeStatusStore.completeLocal(id, SearchResult.blocked(unavailable), null, false);
+            return false;
+        }
         // 中文：每次分配前都检查共享必要条件，不能只检早先 64 个 ID；快速派发不得绕过闭包而对数百排除根做数量搜索。
         // Test the shared necessary condition before *every* allocation, not
         // only an earlier batch of 64 IDs. Faster dispatch must not bypass the

@@ -131,6 +131,7 @@ public final class PlanningInput {
                 : new PlanningInput(index, workbench, limited, unlocked, restricted, furnaceMask, maxFurnaceBatches);
     }
     public List<CraftingRecipes.Entry> entries() { return index.valueOrdered; }
+    public List<CraftingRecipes.Entry> reachableEntries() { return index.reachableEntries(furnaceMask); }
     public List<CraftingRecipes.Entry> producing(Ingredient ingredient) {
         return index.producing(ingredient).stream().filter(e -> index.valueRecipes.contains(e.id())).toList();
     }
@@ -167,7 +168,7 @@ public final class PlanningInput {
     }
 
     private boolean isSingleWithoutRemainders(CraftingRecipes.Entry entry) {
-        return entry.furnace() == null && entry.output().getCount() == 1
+        return entry.station() == null && entry.output().getCount() == 1
                 && index.valueRecipes.contains(entry.id()) && !index.returningRecipes.contains(entry.id());
     }
 
@@ -196,14 +197,16 @@ public final class PlanningInput {
      * returned containers as well as the main output; neither implies that
      * enough material exists or that this recipe may execute. */
     public boolean addReachableOutputs(CraftingRecipes.Entry entry, Set<net.minecraft.world.item.Item> reachable) {
+        if (entry.station() != null && (furnaceMask & entry.station().bit()) == 0) return false;
         if (entry.furnace() != null) {
-            if ((furnaceMask & entry.furnace().station().bit()) == 0) return false;
             // 忽略热量的存在性松弛仍需把可产生的燃料容器算入候选。
             // Heat is relaxed here, but fuel containers must remain reachable candidates.
             if (entry.requirements().stream().noneMatch(requirement ->
                     java.util.Arrays.stream(requirement.ingredient().getItems()).anyMatch(item -> reachable.contains(item.getItem()))))
                 return false;
             boolean changed = reachable.add(entry.output().getItem());
+            if (index.returningRecipes.contains(entry.id()))
+                for (var remainder : entry.processingRemainders()) changed |= reachable.add(remainder.getItem());
             if (!entry.furnace().requiresFuel()) return changed;
             var options = index.fuels.get(entry.furnace().station()).returning();
             for (var fuel : options)
@@ -236,7 +239,7 @@ public final class PlanningInput {
      * equivalent and must keep their normal bounded search semantics. */
     public boolean isExactInverse(CraftingRecipes.Entry first, CraftingRecipes.Entry second) {
         return first != null && second != null
-                && first.furnace() == null && second.furnace() == null
+                && first.station() == null && second.station() == null
                 && index.valueRecipes.contains(first.id()) && index.valueRecipes.contains(second.id())
                 && homogeneousInputs(first, second.output()) && homogeneousInputs(second, first.output());
     }
@@ -255,7 +258,7 @@ public final class PlanningInput {
     public CraftingResultCode unavailable(CraftingRecipes.Entry entry) {
         if (entry == null || !index.valueRecipes.contains(entry.id())) return CraftingResultCode.UNSUPPORTED_RECIPE;
         if (limited && !unlocked.contains(entry.id())) return CraftingResultCode.RECIPE_LOCKED;
-        if (entry.furnace() != null && (furnaceMask & entry.furnace().station().bit()) == 0)
+        if (entry.station() != null && (furnaceMask & entry.station().bit()) == 0)
             return CraftingResultCode.MISSING_WORKSTATION;
         if (entry.gridSize() == 3 && !workbench) return CraftingResultCode.MISSING_WORKSTATION;
         return null;
@@ -265,16 +268,11 @@ public final class PlanningInput {
      * Assemble only a supported canonical grid into copied step values; this pure model consistency
      * check never replaces live server recipe revalidation. */
     public CraftPlan.Step assemble(CraftingRecipes.Entry entry, String path, List<ItemStack> grid) {
-        if (entry.furnace() != null) {
-            var cooking = entry.furnace();
-            if (unavailable(entry) != null || grid.isEmpty() || grid.size() > (cooking.requiresFuel() ? 9 : 1)
-                    || !entry.requirements().getFirst().ingredient().test(grid.getFirst())
-                    || grid.stream().anyMatch(stack -> stack.getCount() != 1 || CraftingRecipes.protectedStack(stack))) return null;
-            if (grid.size() == 1) return new CraftPlan.Step(entry.holder(), path, 1, grid, entry.output(), List.of());
-            var fuels = index.fuels.get(cooking.station()).values();
-            var remainders = new java.util.ArrayList<ItemStack>();
-            for (int i = 1; i < grid.size(); i++) {
-                var fuel = fuels.get(grid.get(i).getItem());
+        if (entry.station() != null) {
+            if (unavailable(entry) != null || !entry.validProcessingInputs(grid)) return null;
+            var remainders = entry.processingRemainders();
+            for (int i = entry.inputSlots(); i < grid.size(); i++) {
+                var fuel = index.fuels.get(entry.station()).values().get(grid.get(i).getItem());
                 if (fuel == null) return null;
                 if (!fuel.remainder().isEmpty()) remainders.add(fuel.remainder());
             }

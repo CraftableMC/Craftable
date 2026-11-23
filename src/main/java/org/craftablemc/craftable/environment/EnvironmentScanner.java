@@ -6,20 +6,17 @@ import java.util.List;
 import java.util.Set;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
-import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Container;
-import net.minecraft.world.LockCode;
 import net.minecraft.world.entity.monster.Shulker;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.EnderChestBlock;
 import net.minecraft.world.level.block.ShulkerBoxBlock;
-import net.minecraft.world.level.block.entity.BaseContainerBlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.RandomizableContainerBlockEntity;
 import net.minecraft.world.level.block.entity.ShulkerBoxBlockEntity;
@@ -114,20 +111,26 @@ final class EnvironmentScanner {
                 continue;
             }
 
-            // 篝火的食物位由原版加工独占，只登记可用的工作站能力。
-            // Vanilla cooking owns the campfire's food slots, so expose only the available workstation capability.
-            var campfire = WorkstationCapability.CAMPFIRE;
-            if (FurnaceWorkstation.matchesBlock(state, campfire)) {
-                if (player.canInteractWithBlock(pos, 4) && FurnaceWorkstation.ticking(level, pos)
-                        && FurnaceWorkstation.idle(level, pos))
-                    workstations.add(new WorkstationEndpoint(workstationEndpointId(level, pos, campfire), campfire, pos));
+            // 篝火的食物位和酿造台的槽位由原版加工独占，只登记当前可用的工作站能力。
+            // Native processing keeps the campfire and brewing slots. Publish only available workstation capabilities.
+            WorkstationCapability station = null;
+            if (block == Blocks.STONECUTTER) station = WorkstationCapability.STONECUTTER;
+            else if (block == Blocks.SMITHING_TABLE) station = WorkstationCapability.SMITHING_TABLE;
+            else if (block == Blocks.BREWING_STAND) station = WorkstationCapability.BREWING_STAND;
+            else if (block == Blocks.CAMPFIRE || block == Blocks.SOUL_CAMPFIRE) station = WorkstationCapability.CAMPFIRE;
+            if (station != null) {
+                // 自定义酿造可能覆盖原版结果，因此只有纯原版配方表才提供这项虚拟能力。
+                // Custom brewing can override vanilla results. Offer virtual brewing only for the vanilla table.
+                if (station == WorkstationCapability.BREWING_STAND && !level.potionBrewing().getRecipes().isEmpty()) continue;
+                var endpoint = new WorkstationEndpoint(workstationEndpointId(level, pos, station), station, pos);
+                if (endpoint.isStillAvailable(player)) workstations.add(endpoint);
                 continue;
             }
 
             BlockEntity blockEntity = level.getBlockEntity(pos);
             if (!(blockEntity instanceof Container container)
                     || hasUnresolvedLoot(blockEntity)
-                    || !canOpenWithoutSideEffects(player, blockEntity)
+                    || !ContainerEndpoint.canOpenWithoutSideEffects(player, blockEntity)
                     || !hasPhysicalAccess(level, pos, state, blockEntity)
                     || !container.stillValid(player)) {
                 continue;
@@ -191,7 +194,7 @@ final class EnvironmentScanner {
         }
 
         BlockEntity first = level.getBlockEntity(pos);
-        if (hasUnresolvedLoot(first) || !canOpenWithoutSideEffects(player, first)) {
+        if (hasUnresolvedLoot(first) || !ContainerEndpoint.canOpenWithoutSideEffects(player, first)) {
             return;
         }
 
@@ -203,7 +206,7 @@ final class EnvironmentScanner {
                 return;
             }
             BlockEntity partner = level.getBlockEntity(partnerPos);
-            if (hasUnresolvedLoot(partner) || !canOpenWithoutSideEffects(player, partner)) {
+            if (hasUnresolvedLoot(partner) || !ContainerEndpoint.canOpenWithoutSideEffects(player, partner)) {
                 return;
             }
         }
@@ -225,17 +228,6 @@ final class EnvironmentScanner {
     private static boolean hasUnresolvedLoot(BlockEntity blockEntity) {
         return blockEntity instanceof RandomizableContainerBlockEntity randomizable
                 && randomizable.getLootTable() != null;
-    }
-
-    private static boolean canOpenWithoutSideEffects(ServerPlayer player, BlockEntity blockEntity) {
-        if (!(blockEntity instanceof BaseContainerBlockEntity baseContainer)) {
-            return true;
-        }
-
-        // canOpen 在锁定时发送消息/声音；后台扫描只以公共组件做同样钥匙比较，不触发这些副作用。
-        // canOpen emits lock messages/sounds; an observational scan uses public components for the same key check without those effects.
-        LockCode lock = baseContainer.collectComponents().getOrDefault(DataComponents.LOCK, LockCode.NO_LOCK);
-        return player.isSpectator() || lock.unlocksWith(player.getMainHandItem());
     }
 
     private static boolean hasPhysicalAccess(

@@ -216,8 +216,8 @@ final class DirectPreparationSettingsScreen extends OptionsSubScreen {
     }
 
     private static Component recipeMethod(CraftingRecipes.Entry entry) {
-        return entry.furnace() == null ? text("method", entry.gridSize(), entry.gridSize())
-                : text("method." + entry.furnace().station().name().toLowerCase(Locale.ROOT));
+        return entry.station() == null ? text("method", entry.gridSize(), entry.gridSize())
+                : text("method." + entry.station().name().toLowerCase(Locale.ROOT));
     }
 
     static String inputSummary(CraftingRecipes.Entry entry) {

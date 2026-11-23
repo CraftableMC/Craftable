@@ -27,7 +27,7 @@ public final class ResourceLedger {
         this.available = new int[sources.size()];
         this.consumed = new int[sources.size()];
         for (int i = 0; i < sources.size(); i++) {
-            if (!CraftingRecipes.protectedStack(sources.get(i).stack)) available[i] = sources.get(i).stack.getCount();
+            if (CraftingRecipes.planningStack(sources.get(i).stack)) available[i] = sources.get(i).stack.getCount();
         }
         this.generated = new ArrayList<>();
     }
@@ -52,14 +52,14 @@ public final class ResourceLedger {
         // Reuse intermediate batch surplus before manufacturing/consuming more.
         for (int i = 0; i < generated.size(); i++) {
             Lot lot = generated.get(i);
-            if (lot.available > 0 && !lot.terminal && !CraftingRecipes.protectedStack(lot.stack) && ingredient.test(lot.stack) && seen.add(Key.of(lot.stack))) {
+            if (lot.available > 0 && !lot.terminal && CraftingRecipes.matchesInput(ingredient, lot.stack) && seen.add(Key.of(lot.stack))) {
                 result.add(new Taken(-1, i, lot.stack.copyWithCount(1)));
                 if (singleDefaultItem) return result;
             }
         }
         for (int i = 0; i < sources.size(); i++) {
             ItemStack stack = sources.get(i).stack;
-            if (available[i] > 0 && ingredient.test(stack) && seen.add(Key.of(stack))) {
+            if (available[i] > 0 && CraftingRecipes.matchesInput(ingredient, stack) && seen.add(Key.of(stack))) {
                 result.add(new Taken(i, -1, stack.copyWithCount(1)));
                 if (singleDefaultItem) return result;
             }
@@ -68,9 +68,9 @@ public final class ResourceLedger {
     }
 
     boolean has(Ingredient ingredient) {
-        for (Lot lot : generated) if (lot.available > 0 && !lot.terminal && !CraftingRecipes.protectedStack(lot.stack) && ingredient.test(lot.stack)) return true;
+        for (Lot lot : generated) if (lot.available > 0 && !lot.terminal && CraftingRecipes.matchesInput(ingredient, lot.stack)) return true;
         for (int i = 0; i < available.length; i++) {
-            if (available[i] > 0 && ingredient.test(sources.get(i).stack)) return true;
+            if (available[i] > 0 && CraftingRecipes.matchesInput(ingredient, sources.get(i).stack)) return true;
         }
         return false;
     }
@@ -80,7 +80,7 @@ public final class ResourceLedger {
     int availableUpTo(Ingredient ingredient, int cap) {
         int count = 0;
         for (var lot : generated) {
-            if (lot.available > 0 && !lot.terminal && !CraftingRecipes.protectedStack(lot.stack) && ingredient.test(lot.stack))
+            if (lot.available > 0 && !lot.terminal && CraftingRecipes.matchesInput(ingredient, lot.stack))
                 count += Math.min(cap - count, lot.available);
             if (count == cap) return cap;
         }
@@ -98,12 +98,12 @@ public final class ResourceLedger {
     long quantity(Ingredient ingredient) {
         long count = 0;
         for (int i = 0; i < available.length; i++)
-            if (available[i] > 0 && ingredient.test(sources.get(i).stack)) count += available[i];
+            if (available[i] > 0 && CraftingRecipes.matchesInput(ingredient, sources.get(i).stack)) count += available[i];
         return count;
     }
 
     boolean hasProtected(Ingredient ingredient) {
-        return sources.stream().anyMatch(s -> CraftingRecipes.protectedStack(s.stack) && ingredient.test(s.stack));
+        return sources.stream().anyMatch(s -> CraftingRecipes.protectedStack(s.stack) && ingredient.test(s.stack) && !CraftingRecipes.matchesInput(ingredient, s.stack));
     }
 
     java.util.Set<Item> availableItems() {
@@ -152,7 +152,7 @@ public final class ResourceLedger {
     Taken producedChoice(int lot, Ingredient ingredient) {
         if (lot < 0) return null;
         Lot entry = generated.get(lot);
-        return !CraftingRecipes.protectedStack(entry.stack) && entry.available > 0 && ingredient.test(entry.stack)
+        return entry.available > 0 && CraftingRecipes.matchesInput(ingredient, entry.stack)
                 ? new Taken(-1, lot, entry.stack.copyWithCount(1)) : null;
     }
 
@@ -251,7 +251,7 @@ public final class ResourceLedger {
         for (int i = 0; i < sources.size(); i++) {
             if (!budget.alive()) return java.util.OptionalLong.empty();
             var stack = sources.get(i).stack;
-            int usable = CraftingRecipes.protectedStack(stack) ? 0 : stack.getCount();
+            int usable = CraftingRecipes.planningStack(stack) ? stack.getCount() : 0;
             if (consumed[i] != 0 || available[i] != usable) return java.util.OptionalLong.empty();
             if (usable == 0) continue;
             if (!reachable.contains(stack.getItem())) return java.util.OptionalLong.empty();

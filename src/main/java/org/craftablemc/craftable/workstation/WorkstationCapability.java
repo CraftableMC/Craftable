@@ -8,13 +8,19 @@ public enum WorkstationCapability {
     FURNACE,
     BLAST_FURNACE,
     SMOKER,
-    CAMPFIRE;
+    CAMPFIRE,
+    STONECUTTER,
+    SMITHING_TABLE,
+    BREWING_STAND;
 
     // 已有顺序也是同步能力位的顺序；新增值只能追加，不能重排。
     // Existing order defines the synchronized bits. Append new values; never reorder them.
     public static final int COOKING_MASK = FURNACE.bit() | BLAST_FURNACE.bit() | SMOKER.bit() | CAMPFIRE.bit();
+    public static final int PROCESSING_MASK = COOKING_MASK | STONECUTTER.bit() | SMITHING_TABLE.bit() | BREWING_STAND.bit();
 
     public int bit() { return 1 << ordinal(); }
 
     public boolean cooking() { return (bit() & COOKING_MASK) != 0; }
+
+    public boolean timedProcessing() { return cooking() || this == BREWING_STAND; }
 }

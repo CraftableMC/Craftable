@@ -30,7 +30,8 @@ public record CraftPlan(ResourceLocation target, int requestedBatches, int compl
     }
 
     public boolean partial() { return completedBatches < requestedBatches; }
-    public boolean hasCooking() { return steps.stream().anyMatch(step -> step.gridSize() == 1); }
+    public boolean hasCooking() { return steps.stream().anyMatch(step -> step.gridSize() == 1
+            && org.craftablemc.craftable.recipe.FurnaceRecipe.of(step.recipe().value()) != null); }
 
     /** 不论配方 ID 或源槽位如何，拒绝物料恒等变换；搜索、非可信见证重放和提交边界共用此规则。
      * 比较实际提取数量与全部交付（含余料/返还物及组件），真实压缩仍是变化。

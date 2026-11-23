@@ -446,7 +446,7 @@ public final class CraftSearch {
                 // A chosen birch-plank producer also selects birch planks as
                 // this OR-ingredient's item. Otherwise another branch's oak
                 // surplus could silently bypass the user's explicit choice.
-                Need need = selected == null ? originalNeed : new Need(Ingredient.of(selected.output()),
+                Need need = selected == null || originalNeed.ingredient.isCustom() ? originalNeed : new Need(Ingredient.of(selected.output()),
                         originalNeed.grid, originalNeed.slot, originalNeed.path, originalNeed.depth, originalNeed.producersOnly);
                 var existing = need.producersOnly ? List.<ResourceLedger.Taken>of() : state.ledger.choices(need.ingredient);
                 // 保留具体首选续算；备用分支从未改动前像复制，无法保留额外备用也不能丢弃首条路线。
@@ -489,6 +489,7 @@ public final class CraftSearch {
                     boolean automatic = pinnedId == null && request.selections().keySet().stream()
                             .noneMatch(path -> path.startsWith(need.path + "."));
                     candidates.removeIf(e -> state.active.contains(e.id()) || recipes.isExactInverse(e, parent)
+                            || pinnedId == null && e.collectsWater()
                             || recipes.requiresExistingProcessingInput(e) && !state.ledger.has(e.requirements().getFirst().ingredient())
                             || automatic && recipes.cannotImproveDemand(e, need.ingredient, parent));
                 }
@@ -714,6 +715,13 @@ public final class CraftSearch {
         }
         if (state.heat == null) state.heat = new java.util.EnumMap<>(org.craftablemc.craftable.workstation.WorkstationCapability.class);
         int heat = state.heat.getOrDefault(furnace.station(), 0);
+        // 捕获路线的熔岩桶已在原料账本中扣除。只在炉步骤完成时结转一次热量。
+        // The water route's lava bucket is already debited. Carry its heat forward exactly once, at step completion.
+        if (finish.recipe.collectsWater() && grid.taken[1].stack().is(net.minecraft.world.item.Items.LAVA_BUCKET)) {
+            int lavaHeat = recipes.fuelTicks(furnace, grid.taken[1].stack());
+            if (lavaHeat == 0) { state.rejected = CraftingResultCode.MISSING_FUEL; remember(state); return false; }
+            heat += lavaHeat;
+        }
         if (heat >= furnace.ticks()) {
             state.heat.put(furnace.station(), heat - furnace.ticks());
             state.cookingBatches++;
@@ -816,10 +824,11 @@ public final class CraftSearch {
             shared.attempts++;
         }
         Set<Item> result = shared.working;
+        var entries = recipes.reachableEntries();
         while (true) {
-            while (shared.cursor < recipes.entries().size()) {
+            while (shared.cursor < entries.size()) {
                 if (!allowance.canContinue()) return false;
-                Entry entry = recipes.entries().get(shared.cursor++);
+                Entry entry = entries.get(shared.cursor++);
                 // 松弛忽略权限以保留对真实被锁中间物的诊断；实际展开时逐配方校验，此集合从不授权。
                 // This relaxation ignores permissions so a genuinely needed
                 // locked intermediate can still be diagnosed by search. Every
@@ -912,7 +921,7 @@ public final class CraftSearch {
         int startBindings;
         Grid(Entry recipe) {
             this.recipe = recipe;
-            taken = new ResourceLedger.Taken[recipe.gridSize() * recipe.gridSize()];
+            taken = new ResourceLedger.Taken[recipe.inputSlots()];
         }
         Grid copy() {
             Grid copy = new Grid(recipe);

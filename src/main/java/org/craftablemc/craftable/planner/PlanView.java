@@ -367,7 +367,7 @@ public record PlanView(CraftingResultCode code, boolean workbench, boolean compl
             var current = child.hypothetical != null && (chosen != null
                     || canReuseProducer(catalog, child, requirement.ingredient(), deficit, stock)) ? child.hypothetical : null;
             var producer = supply != null ? supply.getValue().hypothetical : current != null ? current
-                    : chosen == null ? producers.stream().filter(e -> !active.contains(e.id()))
+                    : chosen == null ? producers.stream().filter(e -> !active.contains(e.id()) && !e.collectsWater())
                     .filter(e -> catalog.unavailable(e) != CraftingResultCode.UNSUPPORTED_RECIPE)
                     .filter(e -> !returnsToActiveConversion(catalog, e, active))
                     .filter(e -> !conversionCycleWithoutStock(catalog, e, stock))

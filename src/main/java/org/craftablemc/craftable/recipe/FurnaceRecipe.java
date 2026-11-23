@@ -5,6 +5,7 @@ import java.util.Map;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.item.crafting.AbstractCookingRecipe;
 import net.minecraft.world.item.crafting.BlastingRecipe;
 import net.minecraft.world.item.crafting.CampfireCookingRecipe;
@@ -20,6 +21,8 @@ import org.craftablemc.craftable.workstation.WorkstationCapability;
  * Frozen vanilla cooking quantities. The server still checks live furnace fuel values before debiting. */
 public record FurnaceRecipe(WorkstationCapability station, int ticks, float experience) {
     public static FurnaceRecipe of(Recipe<?> recipe) {
+        if (recipe instanceof VanillaBrewingRecipe)
+            return new FurnaceRecipe(WorkstationCapability.BREWING_STAND, VanillaBrewingRecipe.TICKS_PER_BATCH, 0);
         WorkstationCapability station;
         if (recipe.getClass() == SmeltingRecipe.class) station = WorkstationCapability.FURNACE;
         else if (recipe.getClass() == BlastingRecipe.class) station = WorkstationCapability.BLAST_FURNACE;
@@ -39,6 +42,8 @@ public record FurnaceRecipe(WorkstationCapability station, int ticks, float expe
     int burnTicks(ItemStack stack) {
         if (stack.isEmpty() || !BuiltInRegistries.ITEM.getKey(stack.getItem()).getNamespace().equals("minecraft")
                 || CraftingRecipes.protectedStack(stack)) return 0;
+        if (station == WorkstationCapability.BREWING_STAND)
+            return stack.is(Items.BLAZE_POWDER) ? ticks * VanillaBrewingRecipe.FUEL_BATCHES : 0;
         RecipeType<?> type = switch (station) {
             case FURNACE -> RecipeType.SMELTING;
             case BLAST_FURNACE -> RecipeType.BLASTING;
@@ -51,6 +56,9 @@ public record FurnaceRecipe(WorkstationCapability station, int ticks, float expe
 
     /** 每代每炉型只收集一次默认组件燃料和返还物。 / Freeze default-stack fuel once per type and generation. */
     FuelTable fuels() {
+        if (station == WorkstationCapability.BREWING_STAND)
+            return new FuelTable(Ingredient.of(Items.BLAZE_POWDER),
+                    Map.of(Items.BLAZE_POWDER, new Fuel(ticks * VanillaBrewingRecipe.FUEL_BATCHES, ItemStack.EMPTY)), java.util.List.of());
         var fuels = new HashMap<Item, Fuel>();
         for (var id : BuiltInRegistries.ITEM.getDataMap(NeoForgeDataMaps.FURNACE_FUELS).keySet()) {
             Item item = BuiltInRegistries.ITEM.get(id.location());

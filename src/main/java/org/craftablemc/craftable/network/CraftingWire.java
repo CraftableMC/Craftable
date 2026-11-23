@@ -317,7 +317,7 @@ public final class CraftingWire {
                             session = buffer.readUUID(); recipes = buffer.readVarLong(); resources = buffer.readVarLong();
                             if (recipes < 0 || resources < 0) throw new IllegalArgumentException("Negative snapshot version");
                             workbench = buffer.readBoolean(); furnaceMask = buffer.readVarInt(); limited = buffer.readBoolean();
-                            if ((furnaceMask & ~org.craftablemc.craftable.workstation.WorkstationCapability.COOKING_MASK) != 0)
+                            if ((furnaceMask & ~org.craftablemc.craftable.workstation.WorkstationCapability.PROCESSING_MASK) != 0)
                                 throw new IllegalArgumentException("Invalid snapshot furnace capabilities");
                             unlockCount = count(buffer, org.craftablemc.craftable.environment.BrowsingSnapshot.MAX_UNLOCKED);
                             phase = Phase.UNLOCKED_RECIPES;

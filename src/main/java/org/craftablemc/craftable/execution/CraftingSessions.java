@@ -88,7 +88,7 @@ public final class CraftingSessions {
             var binding = browsing.endpoints.get(endpoint.id());
             for (var reference : binding.references.entrySet()) {
                 var stack = endpoint.container().getItem(reference.getKey());
-                if (!stack.isEmpty() && !org.craftablemc.craftable.recipe.CraftingRecipes.protectedStack(stack))
+                if (!stack.isEmpty() && org.craftablemc.craftable.recipe.CraftingRecipes.planningStack(stack))
                     result.put(reference.getValue().toString(), new org.craftablemc.craftable.planner.ResourceLedger.Source(
                             endpoint.id(), reference.getKey(), stack));
             }
@@ -151,7 +151,7 @@ public final class CraftingSessions {
                 next.put(endpoint.id(), binding);
                 for (int slot = endpoint.firstSlot(); slot < endpoint.firstSlot() + endpoint.slotCount(); slot++) {
                     var stack = endpoint.container().getItem(slot);
-                    if (stack.isEmpty() || org.craftablemc.craftable.recipe.CraftingRecipes.protectedStack(stack)) continue;
+                    if (stack.isEmpty() || !org.craftablemc.craftable.recipe.CraftingRecipes.planningStack(stack)) continue;
                     var reference = binding.references.computeIfAbsent(slot, ignored -> UUID.randomUUID());
                     inputs.add(new org.craftablemc.craftable.environment.BrowsingSnapshot.Input(reference,
                             endpoint.kind() == org.craftablemc.craftable.environment.EndpointKind.PLAYER ? slot : -1, stack));

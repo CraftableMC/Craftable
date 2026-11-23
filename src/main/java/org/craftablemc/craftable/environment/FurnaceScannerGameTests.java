@@ -11,6 +11,7 @@ import net.minecraft.world.level.block.AbstractFurnaceBlock;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.CampfireBlock;
 import net.minecraft.world.level.block.entity.AbstractFurnaceBlockEntity;
+import net.minecraft.world.level.block.entity.BrewingStandBlockEntity;
 import net.minecraft.world.level.block.entity.CampfireBlockEntity;
 import net.neoforged.neoforge.gametest.GameTestHolder;
 import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
@@ -139,6 +140,63 @@ public final class FurnaceScannerGameTests {
             helper.assertTrue(level.getChunkSource().getChunkNow(missing.getX() >> 4, missing.getZ() >> 4) == null,
                     "furnace check loaded a chunk");
         } finally { helper.setBlock(POSITION, Blocks.AIR); }
+        helper.succeed();
+    }
+
+    @GameTest(templateNamespace = "minecraft", template = EMPTY)
+    public static void stonecutterAndSmithingTableRecheckTheirExactBlockType(GameTestHelper helper) {
+        var player = player(helper);
+        var pos = helper.absolutePos(POSITION);
+        try {
+            helper.setBlock(POSITION, Blocks.STONECUTTER);
+            var nearby = EnvironmentScanner.scan(player, SCAN, 4);
+            var cutter = nearby.workstations().stream().filter(endpoint -> pos.equals(endpoint.position())).findFirst().orElseThrow();
+            helper.assertValueEqual(cutter.capability(), WorkstationCapability.STONECUTTER, "wrong stonecutter capability");
+            helper.assertValueEqual(nearby.furnaceMask(), WorkstationCapability.STONECUTTER.bit(), "stonecutter absent from processing mask");
+            helper.assertTrue(cutter.isStillAvailable(player), "live stonecutter rejected");
+
+            helper.setBlock(POSITION, Blocks.SMITHING_TABLE);
+            helper.assertFalse(cutter.isStillAvailable(player), "smithing table inherited stonecutter capability");
+            var smithing = EnvironmentScanner.scan(player, SCAN, 5);
+            helper.assertValueEqual(smithing.furnaceMask(), WorkstationCapability.SMITHING_TABLE.bit(), "smithing table absent from processing mask");
+            helper.assertFalse(smithing.supports(WorkstationCapability.CRAFTING_3X3), "smithing table was treated as crafting table");
+            helper.assertFalse(smithing.endpoints().stream().anyMatch(endpoint -> pos.equals(endpoint.position())),
+                    "smithing table exposed a storage endpoint");
+        } finally { helper.setBlock(POSITION, Blocks.AIR); remove(player); }
+        helper.succeed();
+    }
+
+    @GameTest(templateNamespace = "minecraft", template = EMPTY)
+    public static void brewingStandKeepsManualSlotsAndItsOwnFuel(GameTestHelper helper) {
+        var player = player(helper);
+        var pos = helper.absolutePos(POSITION);
+        var level = helper.getLevel();
+        try {
+            helper.setBlock(POSITION, Blocks.BREWING_STAND);
+            var stand = (BrewingStandBlockEntity) level.getBlockEntity(pos);
+            var nativeState = stand.saveCustomOnly(level.registryAccess());
+            nativeState.putByte("Fuel", (byte) 12);
+            stand.loadCustomOnly(nativeState, level.registryAccess());
+            var available = EnvironmentScanner.scan(player, SCAN, 7);
+            helper.assertValueEqual(available.furnaceMask(), WorkstationCapability.BREWING_STAND.bit(), "idle brewing stand missing");
+            var station = available.workstations().stream().filter(endpoint -> pos.equals(endpoint.position())).findFirst().orElseThrow();
+            helper.assertTrue(station.isStillAvailable(player), "residual brewing fuel blocked independent virtual use");
+
+            stand.setItem(3, new ItemStack(Items.NETHER_WART));
+            assertUnavailable(helper, player, pos, "brewing stand with native reagent");
+            helper.assertFalse(station.isStillAvailable(player), "occupied brewing stand survived admission recheck");
+            helper.assertFalse(EnvironmentScanner.scan(player, SCAN, 8).endpoints().stream().anyMatch(endpoint -> pos.equals(endpoint.position())),
+                    "brewing reagent exposed as ambient materials");
+            helper.assertTrue(stand.getItem(3).is(Items.NETHER_WART), "scan changed native reagent");
+            helper.assertValueEqual(stand.saveCustomOnly(level.registryAccess()).getByte("Fuel"), (byte) 12, "scan changed brewing fuel");
+
+            stand.clearContent();
+            nativeState.putString("Lock", "brew-key");
+            stand.loadCustomOnly(nativeState, level.registryAccess());
+            helper.assertFalse(station.isStillAvailable(player), "locked brewing station still available");
+            helper.assertFalse(EnvironmentScanner.scan(player, SCAN, 9).supports(WorkstationCapability.BREWING_STAND),
+                    "locked brewing stand was advertised");
+        } finally { helper.setBlock(POSITION, Blocks.AIR); remove(player); }
         helper.succeed();
     }
 

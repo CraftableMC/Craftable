@@ -33,7 +33,7 @@ public record BrowsingSnapshot(UUID session, long recipes, long resources, boole
                 || inventoryMaximum < 1 || inventoryMaximum > 99 || inventory.size() != 36
                 || inputs.size() > MAX_INPUTS || unlocked.size() > MAX_UNLOCKED)
             throw new IllegalArgumentException("Invalid browsing snapshot");
-        if ((furnaceMask & ~org.craftablemc.craftable.workstation.WorkstationCapability.COOKING_MASK) != 0
+        if ((furnaceMask & ~org.craftablemc.craftable.workstation.WorkstationCapability.PROCESSING_MASK) != 0
                 || maxFurnaceBatches < 1 || maxFurnaceBatches > org.craftablemc.craftable.config.CraftableServerConfig.MAX_MAX_FURNACE_BATCHES)
             throw new IllegalArgumentException("Invalid furnace browsing rules");
         unlocked = Set.copyOf(unlocked);
@@ -97,7 +97,7 @@ public record BrowsingSnapshot(UUID session, long recipes, long resources, boole
             java.util.Objects.requireNonNull(reference);
             if (inventorySlot < -1 || inventorySlot >= 36 || stack.isEmpty()
                     || stack.getCount() < 1 || stack.getCount() > stack.getMaxStackSize()
-                    || CraftingRecipes.protectedStack(stack))
+                    || !CraftingRecipes.planningStack(stack))
                 throw new IllegalArgumentException("Invalid authorized source");
             stack = stack.copy();
         }

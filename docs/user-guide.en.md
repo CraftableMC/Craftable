@@ -71,6 +71,14 @@ The world's **Instant processing** setting is on by default. If you turn it off,
 
 Processing pauses if the chunk stops ticking or you're using the workstation by hand. Once the items are ready, they go into your main inventory as soon as everything fits. If the workstation is broken before the job finishes, Craftable returns the inputs it took.
 
+Wet sponges dry normally by default. To collect water as well, select **Dry sponge and collect water** from the sponge node in details. Use an empty bucket and fuel, or let one lava bucket supply the heat and collect the water.
+
+## Stonecutting, smithing and brewing
+
+Place the relevant workstation nearby and search the Recipe Book for stonecutting results, netherite gear or potions. Stonecutting and vanilla netherite upgrades complete instantly. Use the vanilla smithing table to apply trims or upgrade damaged, enchanted or renamed gear.
+
+Brewing needs an idle stand. Craftable plans one bottle per step, with one reagent each time. One blaze powder pays for up to 20 steps in the same plan. Brewing follows the instant processing setting.
+
 ## Which materials can I use?
 
 - Main inventory, the current 2×2/3×3 crafting grid, and the cursor stack.

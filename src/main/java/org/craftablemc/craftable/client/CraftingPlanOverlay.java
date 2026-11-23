@@ -44,6 +44,7 @@ import org.craftablemc.craftable.workstation.WorkstationCapability;
 @EventBusSubscriber(modid = Craftable.MOD_ID, value = Dist.CLIENT)
 public final class CraftingPlanOverlay extends Screen {
     private static final int STATION_X = 20, STATION_Y = 16, STATION_SPACING = 20;
+    private static final ItemStack WATER_BUCKET_PREVIEW = new ItemStack(Items.WATER_BUCKET);
     private static CraftingPlanOverlay current;
     private enum Pane { GRAPH, COSTS, CHOICES }
     private enum Work { PREVIEW, MAXIMUM, CANDIDATE, FALLBACK, AUTHORIZE, CONFIRM }
@@ -181,17 +182,31 @@ public final class CraftingPlanOverlay extends Screen {
     private RecipeCardPattern candidatePattern(PlanView.Candidate candidate) {
         // 同步配方提供图样。选卡仍发送配方 ID 申请服务端整链预览。
         // The synchronized recipe supplies only the diagram. Choosing its ID still requests authoritative planning.
-        var holder = minecraft.level.getRecipeManager().byKey(candidate.recipe()).orElse(null);
-        return RecipeCardPattern.of(holder == null ? null : holder.value(), candidate.gridSize());
+        var id = candidate.recipe();
+        var holder = minecraft.level.getRecipeManager().byKey(org.craftablemc.craftable.recipe.CraftingRecipes.nativeRecipeId(id))
+                .orElseGet(() -> org.craftablemc.craftable.recipe.VanillaBrewingRecipe.byId(id));
+        var pattern = RecipeCardPattern.of(holder == null ? null : holder.value(), candidate.gridSize());
+        if (pattern != null && collectsWater(candidate))
+            return new RecipeCardPattern(1, 2, List.of(pattern.ingredients().getFirst(),
+                    net.minecraft.world.item.crafting.Ingredient.of(Items.BUCKET, Items.LAVA_BUCKET)), false,
+                    pattern.cooking(), pattern.station());
+        return pattern;
+    }
+
+    private static boolean collectsWater(PlanView.Candidate candidate) {
+        return org.craftablemc.craftable.recipe.CraftingRecipes.DRY_SPONGE_WITH_WATER.equals(candidate.recipe());
     }
 
     private static Component candidateMethod(RecipeCardPattern pattern) {
         if (pattern == null) return text("candidate_layout_unavailable");
         var cooking = pattern.cooking();
-        if (cooking != null) {
-            var station = WorkstationIcon.ICONS.stream().filter(icon -> icon.capability() == cooking.station()).findFirst();
-            return station.map(icon -> text(cooking.requiresFuel() ? "candidate_fueled" : "candidate_fuelless",
-                    icon.stack().getHoverName())).orElseGet(() -> text("candidate_layout_unavailable"));
+        if (pattern.station() != null) {
+            for (var icon : WorkstationIcon.ICONS) if (icon.capability() == pattern.station()) {
+                var name = icon.stack().getHoverName();
+                if (cooking == null) return name;
+                return text(cooking.requiresFuel() ? "candidate_fueled" : "candidate_fuelless", name);
+            }
+            return text("candidate_layout_unavailable");
         }
         var grid = pattern.gridSize() == 2 ? text("candidate_inventory_grid")
                 : text("candidate_workbench", Items.CRAFTING_TABLE.getDescription());
@@ -206,6 +221,7 @@ public final class CraftingPlanOverlay extends Screen {
         var pattern = candidatePattern(candidate);
         lines.add(candidateLabel(candidate));
         lines.add(candidateMethod(pattern));
+        if (collectsWater(candidate)) lines.add(text("candidate_collect_water"));
         if (pattern != null) lines.addAll(candidateInputLines(pattern.ingredients()));
         if (candidate.rejection() != null) lines.add(Component.translatable("reason.craftable."
                 + candidate.rejection().name().toLowerCase(java.util.Locale.ROOT)));
@@ -743,7 +759,10 @@ public final class CraftingPlanOverlay extends Screen {
                 new WorkstationIcon(WorkstationCapability.FURNACE, new ItemStack(Items.FURNACE)),
                 new WorkstationIcon(WorkstationCapability.BLAST_FURNACE, new ItemStack(Items.BLAST_FURNACE)),
                 new WorkstationIcon(WorkstationCapability.SMOKER, new ItemStack(Items.SMOKER)),
-                new WorkstationIcon(WorkstationCapability.CAMPFIRE, new ItemStack(Items.CAMPFIRE)));
+                new WorkstationIcon(WorkstationCapability.CAMPFIRE, new ItemStack(Items.CAMPFIRE)),
+                new WorkstationIcon(WorkstationCapability.STONECUTTER, new ItemStack(Items.STONECUTTER)),
+                new WorkstationIcon(WorkstationCapability.SMITHING_TABLE, new ItemStack(Items.SMITHING_TABLE)),
+                new WorkstationIcon(WorkstationCapability.BREWING_STAND, new ItemStack(Items.BREWING_STAND)));
     }
 
     private void queueEmbeddedTooltip() {
@@ -772,17 +791,18 @@ public final class CraftingPlanOverlay extends Screen {
         }
         var output = candidate.output();
         var pattern = candidatePattern(candidate);
-        drawChoiceLabel(g, output.getHoverName(), cx, cy - 4);
+        drawChoiceLabel(g, collectsWater(candidate) ? text("candidate_collect_water") : output.getHoverName(), cx, cy - 4);
         drawChoiceLabel(g, candidateMethod(pattern), cx, cy + 7);
         int outputX = pattern == null ? cx - 9 : cx + 32;
         int outputY = cy + 34;
         if (pattern != null) {
             int size = pattern.gridSize();
-            int inputX = size == 1 ? cx - 50 : cx - 70;
+            int columns = size == 1 ? pattern.sourceWidth() : size;
+            int inputX = size == 1 ? cx - 50 - (columns - 1) * 9 : cx - 70;
             int inputY = size == 1 ? cy + 34 : cy + 17;
             long frame = minecraft.level.getGameTime() / 30;
-            for (int slot = 0; slot < size * size; slot++) {
-                int column = slot % size, row = slot / size;
+            for (int slot = 0; slot < columns * size; slot++) {
+                int column = slot % columns, row = slot / columns;
                 int x = inputX + column * 18, y = inputY + row * 18;
                 g.blit(ResourceLocation.withDefaultNamespace("textures/gui/container/crafting_table.png"), x, y, 29, 16, 18, 18);
                 var options = pattern.ingredient(column, row).getItems();
@@ -796,12 +816,14 @@ public final class CraftingPlanOverlay extends Screen {
         g.blit(ResourceLocation.withDefaultNamespace("textures/gui/container/inventory.png"), outputX, outputY, 153, 27, 18, 18);
         g.renderItem(output, outputX + 1, outputY + 1);
         g.renderItemDecorations(font, output, outputX + 1, outputY + 1);
+        if (collectsWater(candidate)) g.renderItem(WATER_BUCKET_PREVIEW, outputX + 20, outputY + 1);
         drawChoiceLabel(g, Component.literal((choicePage + 1) + " / " + draft.choices().candidates().size()
                 + (draft.choices().truncated() ? " +" : "")), cx, cy + 70);
         var state = candidateStates.getOrDefault(candidate.recipe(), candidate.rejection());
         String marker = state == null || state == CraftingResultCode.SEARCH_BUDGET_EXCEEDED ? "?"
                 : state == CraftingResultCode.CREATED ? "+" : state == CraftingResultCode.PARTIAL_CREATED ? "!" : "×";
-        g.drawString(font, marker, outputX + 25, outputY + 5, state == CraftingResultCode.CREATED ? 0xFF208020 : 0xFF803030, false);
+        g.drawString(font, marker, outputX + (collectsWater(candidate) ? 42 : 25), outputY + 5,
+                state == CraftingResultCode.CREATED ? 0xFF208020 : 0xFF803030, false);
         // 中文：全部槽位/物品绘完后再画提示，避免后续纹理覆盖较早槽位的提示。
         // Draw tooltips only after every slot/item. Later texture blits otherwise
         // cover parts of the tooltip even though it was requested for an earlier slot.

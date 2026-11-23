@@ -81,6 +81,7 @@ public final class InventoryClientSmoke {
         VERIFY_LATE_CONFIRMATION,
         VERIFY_FEEDBACK_TOAST,
         VERIFY_FURNACE_PROGRESS,
+        VERIFY_PROCESSING_STATIONS,
         PASSED,
         FAILED
     }
@@ -97,6 +98,7 @@ public final class InventoryClientSmoke {
     private static final LateConfirmationScenario lateConfirmation = new LateConfirmationScenario();
     private static final FeedbackToastScenario feedbackToast = new FeedbackToastScenario();
     private static final FurnaceProgressScenario furnaceProgress = new FurnaceProgressScenario();
+    private static final ProcessingStationScenario processingStations = new ProcessingStationScenario();
     private static boolean wideEffectsRendered, compactEffectsRendered;
     private static int savedScale = -1;
     private static boolean savedPauseOnLostFocus;
@@ -423,7 +425,10 @@ public final class InventoryClientSmoke {
                 advance(Step.VERIFY_FURNACE_PROGRESS);
             } else if (step == Step.VERIFY_FURNACE_PROGRESS) {
                 if (!furnaceProgress.tick(mc)) return;
-                Craftable.LOGGER.warn("INVENTORY_SMOKE PASS: inventory layout and sword ghost, chest preview/filter/create, 200 ticks tab/index stress, physical workbench ghost, repeated creative E without requests, mode-switch returns, spectator isolation, explicit survival/adventure reopen, native wide/compact effects and HUD return, failure toast reuse, and real timed furnace progress/delivery");
+                advance(Step.VERIFY_PROCESSING_STATIONS);
+            } else if (step == Step.VERIFY_PROCESSING_STATIONS) {
+                if (!processingStations.tick(mc)) return;
+                Craftable.LOGGER.warn("INVENTORY_SMOKE PASS: inventory layout and sword ghost, chest preview/filter/create, 200 ticks tab/index stress, physical workbench ghost, repeated creative E without requests, mode-switch returns, spectator isolation, explicit survival/adventure reopen, native wide/compact effects and HUD return, failure toast reuse, furnace progress/delivery, and native workstation browsing and brewing");
                 ClientTestRun.pass();
                 step = Step.PASSED;
                 mc.options.pauseOnLostFocus = savedPauseOnLostFocus;
@@ -432,6 +437,7 @@ public final class InventoryClientSmoke {
         } catch (Throwable failure) {
             try { lateConfirmation.close(); } catch (Throwable cleanup) { failure.addSuppressed(cleanup); }
             try { furnaceProgress.close(); } catch (Throwable cleanup) { failure.addSuppressed(cleanup); }
+            try { processingStations.close(mc); } catch (Throwable cleanup) { failure.addSuppressed(cleanup); }
             if (savedScale >= 0) mc.options.guiScale().set(savedScale);
             if (started) mc.options.pauseOnLostFocus = savedPauseOnLostFocus;
             ClientTestRun.fail();

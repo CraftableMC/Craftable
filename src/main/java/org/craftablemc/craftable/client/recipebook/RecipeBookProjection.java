@@ -16,13 +16,15 @@ import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.client.gui.screens.recipebook.RecipeBookComponent;
 import net.minecraft.client.gui.screens.recipebook.RecipeCollection;
 import net.minecraft.core.component.DataComponentPatch;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.CraftingRecipe;
 import net.minecraft.world.item.crafting.RecipeHolder;
 import org.craftablemc.craftable.client.mixin.RecipeBookComponentAccessor;
 import org.craftablemc.craftable.config.CraftableClientConfig;
-import org.craftablemc.craftable.recipe.FurnaceRecipe;
+import org.craftablemc.craftable.recipe.CraftingRecipes;
+import org.craftablemc.craftable.recipe.VanillaBrewingRecipe;
 
 /** 中文：客户端线程上对原版已同步配方目录的受限投影；影响可见性，不解锁配方或授予执行权限。
  * 恢复原版时暂时禁用自身投影，避免重入集合计算再次写回增强状态。
@@ -62,9 +64,12 @@ public final class RecipeBookProjection {
     }
     public static boolean visible(RecipeHolder<?> recipe) {
         var mc = Minecraft.getInstance();
-        return (recipe.value() instanceof CraftingRecipe || FurnaceRecipe.of(recipe.value()) != null) && !recipe.value().isSpecial()
-                && !recipe.value().isIncomplete() && recipe.value().canCraftInDimensions(3, 3)
-                && (!CraftableClientConfig.unlockedOnly() || mc.player.getRecipeBook().contains(recipe));
+        boolean brewing = recipe.value() instanceof VanillaBrewingRecipe;
+        boolean supported = recipe.value() instanceof CraftingRecipe ? recipe.value().canCraftInDimensions(3, 3)
+                : CraftingRecipes.processingStation(recipe.value()) != null
+                        && (brewing || recipe.id().getNamespace().equals(ResourceLocation.DEFAULT_NAMESPACE));
+        return supported && !recipe.value().isSpecial() && !recipe.value().isIncomplete()
+                && (brewing || !CraftableClientConfig.unlockedOnly() || mc.player.getRecipeBook().contains(recipe));
     }
 
     /** 合成页只合并相同物品及组件的加工产物。集合身份与原版目录一起更新，材料状态变动不重建按钮。
@@ -74,13 +79,16 @@ public final class RecipeBookProjection {
     }
 
     public static List<RecipeCollection> searchMatches(ClientRecipeBook book, RecipeBookCategories category,
-            List<RecipeCollection> matches) {
+            List<RecipeCollection> matches, String query) {
         if (!active()) return book.getCollection(category).stream().filter(matches::contains).toList();
         var projection = tabProjection(book, category);
         var vanillaMatches = new HashSet<>(matches);
         return projection.collections().stream().filter(collection -> {
             var sources = projection.searchSources().get(collection);
-            return sources == null ? vanillaMatches.contains(collection) : sources.stream().anyMatch(vanillaMatches::contains);
+            return sources == null ? vanillaMatches.contains(collection) : sources.stream().anyMatch(vanillaMatches::contains)
+                    || collection.getRecipes().stream().anyMatch(recipe -> recipe.value() instanceof VanillaBrewingRecipe
+                        && (recipe.id().toString().contains(query) || recipe.value().getResultItem(collection.registryAccess())
+                                .getHoverName().getString().toLowerCase(Locale.ROOT).contains(query)));
         }).toList();
     }
 
@@ -109,18 +117,27 @@ public final class RecipeBookProjection {
         var original = book.getCollection(category);
         List<RecipeBookCategories> cooking = switch (category) {
             case CRAFTING_SEARCH -> List.of(RecipeBookCategories.FURNACE_SEARCH,
-                    RecipeBookCategories.BLAST_FURNACE_SEARCH, RecipeBookCategories.SMOKER_SEARCH, RecipeBookCategories.CAMPFIRE);
-            case CRAFTING_BUILDING_BLOCKS -> List.of(RecipeBookCategories.FURNACE_BLOCKS, RecipeBookCategories.BLAST_FURNACE_BLOCKS);
+                    RecipeBookCategories.BLAST_FURNACE_SEARCH, RecipeBookCategories.SMOKER_SEARCH, RecipeBookCategories.CAMPFIRE,
+                    RecipeBookCategories.STONECUTTER, RecipeBookCategories.SMITHING);
+            case CRAFTING_BUILDING_BLOCKS -> List.of(RecipeBookCategories.FURNACE_BLOCKS, RecipeBookCategories.BLAST_FURNACE_BLOCKS,
+                    RecipeBookCategories.STONECUTTER);
+            case CRAFTING_EQUIPMENT -> List.of(RecipeBookCategories.SMITHING);
             case CRAFTING_MISC -> List.of(RecipeBookCategories.FURNACE_FOOD, RecipeBookCategories.FURNACE_MISC,
                     RecipeBookCategories.BLAST_FURNACE_MISC, RecipeBookCategories.SMOKER_FOOD, RecipeBookCategories.CAMPFIRE);
             default -> List.of();
         };
         if (cooking.isEmpty()) return new TabProjection(original, Map.of());
 
-        var cookingCollections = cooking.stream().flatMap(source -> book.getCollection(source).stream()).toList();
+        var cookingCollections = new ArrayList<>(cooking.stream().flatMap(source -> book.getCollection(source).stream()).toList());
+        if ((category == RecipeBookCategories.CRAFTING_SEARCH || category == RecipeBookCategories.CRAFTING_MISC)
+                && Minecraft.getInstance().level != null) {
+            var registries = Minecraft.getInstance().level.registryAccess();
+            for (var holder : VanillaBrewingRecipe.recipes())
+                cookingCollections.add(new RecipeCollection(registries, List.of(holder)));
+        }
         var outputs = new HashMap<RecipeHolder<?>, Output>();
         for (var collection : cookingCollections) for (var recipe : collection.getRecipes()) {
-            if (FurnaceRecipe.of(recipe.value()) != null) {
+            if (CraftingRecipes.processingStation(recipe.value()) != null) {
                 var result = recipe.value().getResultItem(collection.registryAccess());
                 if (!result.isEmpty()) outputs.put(recipe, Output.of(result));
             }
@@ -139,6 +156,7 @@ public final class RecipeBookProjection {
             groups.add(group);
             for (var recipe : source.getRecipes()) {
                 Output output = outputs.get(recipe);
+                if (output == null && !(recipe.value() instanceof CraftingRecipe)) continue;
                 if (output == null && recipe.value() instanceof CraftingRecipe)
                     output = Output.of(recipe.value().getResultItem(source.registryAccess()));
                 var destination = cookingOutputs.contains(output)
@@ -151,7 +169,8 @@ public final class RecipeBookProjection {
         var searchSources = new HashMap<RecipeCollection, List<RecipeCollection>>();
         for (var group : groups) {
             if (group.recipes.isEmpty()) continue;
-            if (group.recipes.equals(group.original.getRecipes())) {
+            if (group.recipes.equals(group.original.getRecipes())
+                    && !(group.recipes.getFirst().value() instanceof VanillaBrewingRecipe)) {
                 result.add(group.original);
                 continue;
             }
@@ -175,8 +194,9 @@ public final class RecipeBookProjection {
         var book = mc.player.getRecipeBook();
         var search = access.craftable$getSearchBox();
         if (search == null || search.getValue().isEmpty()) return collections(book, tab.getCategory());
-        var matches = mc.getConnection().searchTrees().recipes().search(search.getValue().toLowerCase(Locale.ROOT));
-        return searchMatches(book, tab.getCategory(), matches);
+        String query = search.getValue().toLowerCase(Locale.ROOT);
+        var matches = mc.getConnection().searchTrees().recipes().search(query);
+        return searchMatches(book, tab.getCategory(), matches, query);
     }
 
     private record Output(Item item, DataComponentPatch components) {

@@ -24,7 +24,7 @@ import org.craftablemc.craftable.environment.EndpointKind;
 import org.craftablemc.craftable.environment.EnvironmentSnapshot;
 import org.craftablemc.craftable.planner.CraftPlan;
 import org.craftablemc.craftable.recipe.FurnaceRecipe;
-import org.craftablemc.craftable.workstation.FurnaceWorkstation;
+import org.craftablemc.craftable.recipe.CraftingRecipes;
 import org.craftablemc.craftable.workstation.WorkstationCapability;
 
 /**
@@ -153,25 +153,22 @@ final class CraftingTransaction {
     }
 
     private static List<FurnaceJobs.Work> cookingWork(ServerPlayer player, CraftPlan plan, EnvironmentSnapshot snapshot) {
-        if (!plan.hasCooking()) return List.of();
-        var level = player.serverLevel();
         var stations = new EnumMap<WorkstationCapability, BlockPos>(WorkstationCapability.class);
         var result = new ArrayList<FurnaceJobs.Work>();
         for (var step : plan.steps()) {
             if (step.gridSize() != 1) continue;
+            var station = CraftingRecipes.processingStation(step.recipe().value());
+            if (station == null) return null;
             var furnace = FurnaceRecipe.of(step.recipe().value());
-            if (furnace == null) return null;
-            var position = stations.get(furnace.station());
+            var position = stations.get(station);
             if (position == null) {
-                position = snapshot.workstations().stream().filter(endpoint -> endpoint.capability() == furnace.station())
-                        .map(endpoint -> endpoint.position()).filter(java.util.Objects::nonNull)
-                        .filter(pos -> FurnaceWorkstation.capability(level, pos) == furnace.station()
-                                && FurnaceWorkstation.ticking(level, pos) && FurnaceWorkstation.idle(level, pos))
+                position = snapshot.workstations().stream().filter(endpoint -> endpoint.capability() == station
+                                && endpoint.isStillAvailable(player)).map(endpoint -> endpoint.position())
                         .findFirst().orElse(null);
                 if (position == null) return null;
-                stations.put(furnace.station(), position);
+                stations.put(station, position);
             }
-            result.add(new FurnaceJobs.Work(position, furnace.station(), furnace.ticks()));
+            if (furnace != null) result.add(new FurnaceJobs.Work(position, station, furnace.ticks()));
         }
         return result;
     }
@@ -181,7 +178,7 @@ final class CraftingTransaction {
         for (var step : plan.steps()) {
             if (step.gridSize() != 1) continue;
             var cooking = FurnaceRecipe.of(step.recipe().value());
-            if (cooking.station() == WorkstationCapability.CAMPFIRE) continue;
+            if (cooking == null || !cooking.station().cooking() || cooking.station() == WorkstationCapability.CAMPFIRE) continue;
             float xp = cooking.experience();
             rewards.compute(step.recipe().id(), (id, old) -> new FurnaceJobs.Reward(id, old == null ? 1 : old.batches() + 1, xp));
         }
@@ -217,7 +214,7 @@ final class CraftingTransaction {
                 var level = player.serverLevel();
                 if (level.random.nextFloat() < exact - experience) experience++;
                 ExperienceOrb.award(level, player.position(), experience);
-                player.getServer().getRecipeManager().byKey(reward.recipe())
+                player.getServer().getRecipeManager().byKey(CraftingRecipes.nativeRecipeId(reward.recipe()))
                         .ifPresent(recipe -> player.awardRecipes(List.of(recipe)));
             } catch (RuntimeException exception) {
                 Craftable.LOGGER.error("Post-commit furnace reward failed for {}", reward.recipe(), exception);
@@ -228,8 +225,8 @@ final class CraftingTransaction {
     static void notifyDeferred(ServerPlayer player, List<FurnaceJobs.CompletedStep> steps) {
         if (steps.stream().anyMatch(step -> step.gridSize() == 3)) notifyWorkbench(player);
         for (var step : steps) {
-            var holder = player.getServer().getRecipeManager().byKey(step.recipe()).orElse(null);
-            notifyStep(player, step.recipe(), holder, step.output(), step.inputs(), step.gridSize() == 1);
+            var holder = player.getServer().getRecipeManager().byKey(CraftingRecipes.nativeRecipeId(step.recipe())).orElse(null);
+            notifyStep(player, step.recipe(), holder, step.output(), step.inputs());
         }
     }
 
@@ -266,7 +263,7 @@ final class CraftingTransaction {
         // previews, rollbacks and 2x2-only partial preparation never count.
         if (plan.steps().stream().anyMatch(step -> step.gridSize() == 3)) notifyWorkbench(player);
         for (var step : plan.steps()) {
-            notifyStep(player, step.recipe().id(), step.recipe(), step.output(), step.inputs(), step.gridSize() == 1);
+            notifyStep(player, step.recipe().id(), step.recipe(), step.output(), step.inputs());
         }
         for (ItemEntity entity : drops) {
             try {
@@ -289,10 +286,15 @@ final class CraftingTransaction {
     /** 两种交付共用逐步通知，监听器失败不会重试物品交付。
      * Share step notifications across both delivery modes. An observer failure cannot replay items. */
     private static void notifyStep(ServerPlayer player, ResourceLocation id,
-            net.minecraft.world.item.crafting.RecipeHolder<?> holder, ItemStack output, List<ItemStack> inputs, boolean cooking) {
+            net.minecraft.world.item.crafting.RecipeHolder<?> holder, ItemStack output, List<ItemStack> inputs) {
         try {
             output.onCraftedBy(player.serverLevel(), player, output.getCount());
-            if (cooking) {
+            if (id.getNamespace().equals(Craftable.MOD_ID) && id.getPath().startsWith("brewing/")) {
+                EventHooks.onPlayerBrewedPotion(player, output);
+                var contents = output.get(net.minecraft.core.component.DataComponents.POTION_CONTENTS);
+                if (contents != null) contents.potion().ifPresent(potion ->
+                        net.minecraft.advancements.CriteriaTriggers.BREWED_POTION.trigger(player, potion));
+            } else if (holder != null && FurnaceRecipe.of(holder.value()) != null) {
                 EventHooks.firePlayerSmeltedEvent(player, output);
             } else {
                 EventHooks.firePlayerCraftingEvent(player, output, new SimpleContainer(inputs.toArray(ItemStack[]::new)));

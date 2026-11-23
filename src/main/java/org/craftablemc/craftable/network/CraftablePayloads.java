@@ -9,7 +9,7 @@ import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
  * ClientPayloadHandler runs only inside client-inbound main-thread tasks; execution requests still require service-owned authoritative validation.
  */
 public final class CraftablePayloads {
-    public static final String PROTOCOL_VERSION = "17";
+    public static final String PROTOCOL_VERSION = "18";
 
     private CraftablePayloads() {}
 

@@ -51,7 +51,7 @@ public abstract class RecipeBookComponentMixin {
             target = "Lnet/minecraft/client/searchtree/SearchTree;search(Ljava/lang/String;)Ljava/util/List;"))
     private List<RecipeCollection> craftable$searchProjectedCollections(SearchTree<RecipeCollection> search, String query) {
         var category = ((RecipeBookComponentAccessor) this).craftable$getSelectedTab().getCategory();
-        return RecipeBookProjection.searchMatches(book, category, search.search(query));
+        return RecipeBookProjection.searchMatches(book, category, search.search(query), query);
     }
 
     @Redirect(method = "updateTabs", at = @At(value = "INVOKE",

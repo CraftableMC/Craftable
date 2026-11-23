@@ -34,11 +34,12 @@ import org.craftablemc.craftable.Craftable;
 import org.craftablemc.craftable.network.FurnaceProgressPayload;
 import org.craftablemc.craftable.network.FurnaceProgressPayload.Mode;
 import org.craftablemc.craftable.planner.SearchBudget;
+import org.craftablemc.craftable.recipe.VanillaBrewingRecipe;
 import org.craftablemc.craftable.workstation.FurnaceWorkstation;
 import org.craftablemc.craftable.workstation.WorkstationCapability;
 
-/** 已付款的有界炉任务；不借用原炉槽、燃烧值或经验账本，不持有跨 tick 的活来源。
- * Bounded paid furnace orders: never borrow native slots, heat or XP, or retain live source handles across ticks. */
+/** 有界的已付款加工订单，不借用原版槽位、燃料和经验账本，不持有跨 tick 的活来源。
+ * Bounded paid processing orders with independent slots, fuel and XP accounting and no retained live source handles. */
 @EventBusSubscriber(modid = Craftable.MOD_ID)
 public final class FurnaceJobs {
     private static final String DATA_ID = "craftable_furnace_jobs", TOKEN = "craftable_furnace_token";
@@ -51,8 +52,8 @@ public final class FurnaceJobs {
     public record Work(BlockPos position, WorkstationCapability capability, int ticks) {
         public Work {
             position = Objects.requireNonNull(position, "position").immutable();
-            if (!Objects.requireNonNull(capability, "capability").cooking() || ticks <= 0)
-                throw new IllegalArgumentException("Invalid furnace work");
+            if (!Objects.requireNonNull(capability, "capability").timedProcessing() || ticks <= 0)
+                throw new IllegalArgumentException("Invalid timed work");
         }
     }
 
@@ -78,7 +79,8 @@ public final class FurnaceJobs {
             for (var input : inputs) {
                 if (input == null || (gridSize == 1 && input.isEmpty())
                         || !input.isEmpty() && (input.getCount() != 1
-                        || org.craftablemc.craftable.recipe.CraftingRecipes.protectedStack(input)))
+                        || org.craftablemc.craftable.recipe.CraftingRecipes.protectedStack(input)
+                        && !(gridSize == 1 && VanillaBrewingRecipe.isPlainVanillaPotion(input))))
                     throw new IllegalArgumentException("Invalid completed step input");
             }
             if (inputs.stream().allMatch(ItemStack::isEmpty)) throw new IllegalArgumentException("Empty completed step");
@@ -176,8 +178,8 @@ public final class FurnaceJobs {
         for (var player : server.getPlayerList().getPlayers()) publish(state, player, server.getTickCount());
     }
 
-    /** 只由原版炉或篝火的实际加工 tick 推进，未运行的区块不会追时。
-     * Only a native furnace or campfire cooking tick advances work. An inactive chunk accrues no time. */
+    /** 只由原版加工工作站的实际 tick 推进，未运行的区块不会追时。
+     * Only the native processing block's tick advances work. An inactive chunk accrues no time. */
     public static void processingTick(ServerLevel level, BlockPos position, BlockEntity blockEntity) {
         if (!blockEntity.getPersistentData().hasUUID(TOKEN)) return;
         var server = level.getServer();

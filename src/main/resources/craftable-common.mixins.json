@@ -3,6 +3,7 @@
   "minVersion": "0.8",
   "package": "org.craftablemc.craftable.menu.mixin",
   "compatibilityLevel": "JAVA_21",
-  "mixins": ["SlotPositionAccessor", "FurnaceTickMixin", "CampfireTickMixin"],
+  "mixins": ["SlotPositionAccessor", "FurnaceTickMixin", "CampfireTickMixin", "SmithingTransformRecipeAccessor",
+    "BrewingStandStateAccessor", "BrewingStandTickMixin"],
   "injectors": { "defaultRequire": 1 }
 }

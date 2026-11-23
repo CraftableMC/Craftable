@@ -14,6 +14,7 @@ import org.craftablemc.craftable.Craftable;
 import org.craftablemc.craftable.api.CraftingResultCode;
 import org.craftablemc.craftable.planner.CraftRequest;
 import org.craftablemc.craftable.planner.SearchBudget;
+import org.craftablemc.craftable.recipe.CraftingRecipes;
 
 /** 在正常服务门面实测炉链的站点、真实能源和单次提交。
  * Exercise station eligibility, real fuel and one commit through the production service. */
@@ -123,6 +124,42 @@ public final class FurnaceChainGameTests {
             helper.assertValueEqual(inventory.countItem(Items.BEEF), 0, "Soul campfire did not pay the remaining food");
             helper.assertValueEqual(inventory.countItem(Items.COOKED_BEEF), 2, "Each campfire should deliver one cooked beef");
             helper.assertValueEqual(inventory.countItem(Items.COAL), 1, "Soul campfire consumed coal");
+        } finally {
+            helper.setBlock(station, Blocks.AIR);
+            PlanningTestSupport.remove(player);
+        }
+        helper.succeed();
+    }
+
+    @GameTest(templateNamespace = "minecraft", template = "bastion/mobs/empty", batch = "furnace_chain")
+    public static void wetSpongeDryingAndWaterCollectionAreDistinctRoutes(GameTestHelper helper) {
+        var station = new BlockPos(2, 1, 1);
+        var player = PlanningTestSupport.player(helper);
+        var inventory = player.getInventory();
+        try {
+            helper.setBlock(station, Blocks.FURNACE);
+            inventory.setItem(0, new ItemStack(Items.WET_SPONGE, 3));
+            inventory.setItem(1, new ItemStack(Items.COAL, 2));
+            inventory.setItem(2, new ItemStack(Items.BUCKET));
+            var dry = CraftRequest.one(CraftingRecipes.DRY_SPONGE);
+            var collect = CraftRequest.one(CraftingRecipes.DRY_SPONGE_WITH_WATER);
+            helper.assertValueEqual(CraftingService.create(player, dry, false, budget()).code(), CraftingResultCode.CREATED,
+                    "Plain drying refused wet sponge");
+            helper.assertValueEqual(inventory.countItem(Items.BUCKET), 1, "Default drying consumed the optional bucket");
+            helper.assertValueEqual(inventory.countItem(Items.WATER_BUCKET), 0, "Default drying selected water collection");
+
+            helper.assertValueEqual(CraftingService.create(player, collect, false, budget()).code(), CraftingResultCode.CREATED,
+                    "An empty bucket with ordinary fuel did not collect water");
+            helper.assertValueEqual(inventory.countItem(Items.BUCKET), 0, "Water collection did not debit the empty bucket");
+            helper.assertValueEqual(inventory.countItem(Items.WATER_BUCKET), 1, "Water collection did not deliver a bucket");
+            inventory.setItem(inventory.getFreeSlot(), new ItemStack(Items.LAVA_BUCKET));
+            helper.assertValueEqual(CraftingService.create(player, collect, false, budget()).code(), CraftingResultCode.CREATED,
+                    "A single lava bucket did not both heat and collect water");
+            helper.assertValueEqual(inventory.countItem(Items.LAVA_BUCKET), 0, "Collector did not debit the lava fuel");
+            helper.assertValueEqual(inventory.countItem(Items.BUCKET), 0, "One fuel bucket returned both an empty and a water bucket");
+            helper.assertValueEqual(inventory.countItem(Items.WATER_BUCKET), 2, "Both collector routes should yield one bucket");
+            helper.assertValueEqual(inventory.countItem(Items.SPONGE), 3, "Drying and collecting did not deliver exactly three sponges");
+            helper.assertValueEqual(inventory.countItem(Items.WET_SPONGE), 0, "Residual sponge input remained");
         } finally {
             helper.setBlock(station, Blocks.AIR);
             PlanningTestSupport.remove(player);

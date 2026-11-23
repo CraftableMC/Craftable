@@ -14,8 +14,11 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Container;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.alchemy.PotionContents;
+import net.minecraft.world.item.alchemy.Potions;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.CampfireBlock;
+import net.minecraft.world.level.block.entity.BrewingStandBlockEntity;
 import net.minecraft.world.level.block.entity.CampfireBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.saveddata.SavedData;
@@ -139,6 +142,54 @@ public final class FurnaceJobsGameTests {
         verifyReplacementRefund(helper, Blocks.CAMPFIRE.defaultBlockState().setValue(CampfireBlock.LIT, true),
                 Blocks.SOUL_CAMPFIRE.defaultBlockState().setValue(CampfireBlock.LIT, true),
                 WorkstationCapability.CAMPFIRE, List.of(new ItemStack(Items.BEEF, 3)), new ItemStack(Items.COOKED_BEEF, 3));
+    }
+
+    @GameTest(batch = "brewing_jobs", templateNamespace = "minecraft", template = EMPTY, timeoutTicks = 80)
+    public static void brewingOrderFollowsNativeTickAndRetainsManualFuel(GameTestHelper helper) {
+        var player = PlanningTestSupport.player(helper);
+        var level = helper.getLevel();
+        var position = helper.absolutePos(new BlockPos(1, 2, 1));
+        try {
+            level.setBlockAndUpdate(position, Blocks.BREWING_STAND.defaultBlockState());
+            var stand = (BrewingStandBlockEntity) level.getBlockEntity(position);
+            var nativeState = stand.saveCustomOnly(level.registryAccess());
+            nativeState.putByte("Fuel", (byte) 9);
+            stand.loadCustomOnly(nativeState, level.registryAccess());
+
+            var water = PotionContents.createItemStack(Items.POTION, Potions.WATER);
+            var awkward = PotionContents.createItemStack(Items.POTION, Potions.AWKWARD);
+            var wart = new ItemStack(Items.NETHER_WART);
+            var fuel = new ItemStack(Items.BLAZE_POWDER);
+            // 这里只用短计时验证原生 tick 驱动和存档，配方时长属于酿造模型。
+            // Short work isolates native ticking and persistence. The brewing model owns recipe duration.
+            var work = List.of(new FurnaceJobs.Work(position, WorkstationCapability.BREWING_STAND, 4));
+            var completed = List.of(new FurnaceJobs.CompletedStep(id("brewing_fixture"), 1, List.of(water, wart, fuel), awkward));
+            helper.assertTrue(FurnaceJobs.start(player, work, List.of(water, wart, fuel), List.of(awkward), List.of(), completed),
+                    "brewing order rejected with independent manual fuel remaining");
+            stand.setItem(3, new ItemStack(Items.REDSTONE));
+            reload(player, serialized(player));
+
+            helper.runAtTickTime(6, () -> check(player, () -> {
+                helper.assertValueEqual((int) field(job(player), "elapsed"), 0, "occupied brewing stand advanced virtual order");
+                helper.assertTrue(stand.getItem(3).is(Items.REDSTONE), "virtual order changed native reagent");
+                helper.assertValueEqual(player.getInventory().countItem(Items.POTION), 0, "paused order delivered a potion");
+                stand.clearContent();
+            }));
+            helper.runAtTickTime(15, () -> {
+                try {
+                    helper.assertTrue(job(player) == null, "brewing work did not finish after the real block tick resumed");
+                    helper.assertValueEqual(player.getInventory().countItem(Items.POTION), 1, "brewing did not deliver one potion");
+                    helper.assertTrue(player.getInventory().items.stream().anyMatch(stack -> ItemStack.matches(stack, awkward)),
+                            "brewing changed the potion components");
+                    helper.assertTrue(stand.isEmpty(), "virtual brewing entered native slots");
+                    helper.assertValueEqual(stand.saveCustomOnly(level.registryAccess()).getByte("Fuel"), (byte) 9,
+                            "virtual brewing drained native fuel");
+                    helper.succeed();
+                } catch (Exception exception) { throw new AssertionError(exception); }
+                finally { cleanup(player); }
+            });
+        } catch (RuntimeException | AssertionError exception) { cleanup(player); throw exception; }
+        catch (Exception exception) { cleanup(player); throw new AssertionError(exception); }
     }
 
     private static void verifyReplacementRefund(GameTestHelper helper, BlockState original, BlockState replacement,

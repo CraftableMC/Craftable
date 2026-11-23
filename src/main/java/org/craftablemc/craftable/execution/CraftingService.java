@@ -89,7 +89,7 @@ public final class CraftingService {
             var available = new ArrayList<net.minecraft.world.item.ItemStack>();
             for (var source : sources(snapshot)) {
                 var stack = source.stack();
-                if (!CraftingRecipes.protectedStack(stack)) available.add(stack);
+                if (CraftingRecipes.planningStack(stack)) available.add(stack);
             }
             var view = org.craftablemc.craftable.planner.PlanView.from(prepared.recipes(), prepared.request(),
                     prepared.result(), prepared.delivery().drops(), available);
