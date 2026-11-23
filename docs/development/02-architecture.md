@@ -2,7 +2,7 @@
 
 本页说明当前实现的模块、数据所有权和安全边界，不按开发阶段罗列曾经的结构。
 目前 M4 的交付合同与当时参数见 [M4 实施说明](14-m4-implementation.md)，实际验证范围见 [M4 验收](15-m4-acceptance.md)；
-现行设置见 [Pre-M5 实施说明](16-pre-m5-transition.md)。M5 从静态配方预热开始实施，炉类边界见 [M5 实施计划](19-m5-implementation-plan.md)。
+现行设置见 [Pre-M5 实施说明](16-pre-m5-transition.md)。原版工作站与配方预热见 [M5 实施计划](19-m5-implementation-plan.md)，验收条目和当前问题见 [M5 验收与测试记录](20-m5-acceptance.md)。
 
 构建、代码维护和贡献说明见[开发指南](../developer-guide.zh-CN.md)，
 生产入口、副作用和状态消费者的核对见 [17 行为链审计](17-production-behavior-audit.md#behavior)。
@@ -17,8 +17,8 @@
 org/craftablemc/craftable/
   api/            内部结果枚举；尚不承诺第三方扩展 API
   environment/    环境发现、资源端点、授权快照、世代和诊断短缓存
-  workstation/    原版 2×2 / 3×3 能力及其来源
-  recipe/         普通配方规范化、共享静态知识与可重建缓存
+  workstation/    已支持的原版工作站能力及其来源
+  recipe/         已支持配方的规范化、共享静态知识与可重建缓存
   planner/        有界搜索、精确账本、有序步骤、见证验证及显示投影
   execution/      权威门面、容量模拟、唯一事务和短期交互会话
   network/        有界载荷、限流/耗时准入、浏览订阅及快照传输
@@ -197,6 +197,8 @@ org/craftablemc/craftable/
 
 普通合成、炉类、营火、切石、下界合金升级和酿造共用足量规划与提交。计时订单单独保存已扣材料或待交付产物，由绑定的炉类或酿造台实际 tick 推进。见 [M5 订单生命周期](19-m5-implementation-plan.md#timed)。
 
+生产与规划建模和 M5 工作站兼容与占用、M6 配方书呈现并行推进。完整模型确定后再制定接入契约。迁移已有定值路线时，须核对规划、预览、确认、扣料、交付和订单生命周期。概率执行和配方 API 按各自的验证结果逐步开放。见[配方与生产规划模型](21-production-planning-model.md)与[实施路线图](01-roadmap.md)。
+
 后续机器必须先约定真实输入输出、时间/能量、催化剂、返还物、经验、权限与补偿等级，再接同一门面和部分策略。数据包不能代替复杂机器副作用的代码适配器，`simulate` 有副作用或无法合理补偿的动作不能直接纳入自动事务。
 
-便携内容和末影箱物品钥匙按 R1 独立设计，不能从未授权内容自授权；可达性/BFS 与实体输入另行解决几何、节点预算和竞态。范围与顺序见 [00 产品定义](00-product-definition.md)、[01 路线图](01-roadmap.md)、[04 兼容性](04-compatibility-and-config.md)及 ADR，不预建通用框架。
+R1 验证末影箱物品钥匙的授权和便携内容的事务写回。存储接入的可写能力随事务验证开放。可达性与实体输入另行处理几何、节点预算和竞态。M11 用兼容模块验证工作站与动作适配，其公开契约以真实接入和安全验证结果定版。见 [R1 存储资源端点设计](16-pre-m5-transition.md#resources)与 [04 兼容性](04-compatibility-and-config.md)。
